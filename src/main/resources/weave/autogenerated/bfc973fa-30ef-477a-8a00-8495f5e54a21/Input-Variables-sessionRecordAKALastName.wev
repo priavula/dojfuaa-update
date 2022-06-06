@@ -1,0 +1,4 @@
+%dw 2.0
+
+type auto_bfc973fa_30ef_477a_8a00_8495f5e54a21_Input_Variables_sessionRecordAKALastName = Null
+

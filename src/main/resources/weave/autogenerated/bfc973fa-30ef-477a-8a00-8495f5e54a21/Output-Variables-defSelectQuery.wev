@@ -1,0 +1,9 @@
+%dw 2.0
+
+type auto_bfc973fa_30ef_477a_8a00_8495f5e54a21_Output_Variables_defSelectQuery = Array<{ _?: java_lang_Object }>
+type java_lang_Object = {|  |} {"typeAlias": "Object",
+"class": "java.lang.Object",
+"typeId": "java.lang.Object"}
+
+
+

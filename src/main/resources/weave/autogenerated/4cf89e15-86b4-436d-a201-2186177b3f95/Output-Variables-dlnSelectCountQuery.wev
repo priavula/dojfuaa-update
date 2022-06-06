@@ -1,0 +1,9 @@
+%dw 2.0
+
+type auto_4cf89e15_86b4_436d_a201_2186177b3f95_Output_Variables_dlnSelectCountQuery = Array<{ _?: java_lang_Object }>
+type java_lang_Object = {|  |} {"typeAlias": "Object",
+"class": "java.lang.Object",
+"typeId": "java.lang.Object"}
+
+
+

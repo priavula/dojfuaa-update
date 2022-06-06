@@ -1,0 +1,3068 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule
+	xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+	xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
+	xmlns:sftp="http://www.mulesoft.org/schema/mule/sftp"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:file="http://www.mulesoft.org/schema/mule/file"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd 
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd">
+		<flow name="dojfuaaupdateFlow"
+		doc:id="15ea5f0b-aed8-46e4-859d-a771ea89c303">
+		<file:listener doc:name="On New or Updated File"
+			doc:id="7fbb626b-84c2-4f63-8ff3-753fc7785a4b"
+			config-ref="IncomingFile" directory="${tempDOJ.data}" autoDelete="true" moveToDirectory="${tempDOJ.backupdata}" renameTo="#[(vars.fileName default &quot;&quot;) ++ (now() as String{format:'yyyyMMddHHmmssSSSSs'})]">
+			<scheduling-strategy>
+				<fixed-frequency frequency="${doj.file.frequency}" />
+			</scheduling-strategy>
+		</file:listener>
+		<set-variable value="#[attributes.fileName]" doc:name="Set fileName" doc:id="d3efe899-5c6f-4a6b-8f82-651f25be6429" variableName="fileName"/>
+		<ee:transform doc:name="Transform Message" doc:id="272aae01-7e30-422d-b02b-785492bdcf30" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+payload as String]]></ee:set-payload>
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="originalPayload" ><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Transform Message"
+			doc:id="fdf5fb37-a181-4acb-a7c0-31a038f390be">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="recordValue"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+
+---
+if(payload > ' ') substring (payload,0,10) else ''
+]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<db:select doc:name="Select DOJ_FUAA_UPDATE Flag from PRP"
+			doc:id="599a92f0-026e-42de-bfa0-393e4ff8d0e4"
+			config-ref="DB2_Config_OTS" target="checkFUAAUpdateFlagQuery">
+			<db:sql><![CDATA[SELECT VALUE FROM GAAOWN.GAVPRP1 WHERE NAME = 'doj_fuaa_update_flag';]]></db:sql>
+		</db:select>
+		<choice doc:name="Choice to check record value and DB response"
+			doc:id="dd1000ce-ff12-40cc-aeed-b1338d4d6eb0">
+			<when
+				expression="#[(vars.recordValue &gt; '          ') and (vars.checkFUAAUpdateFlagQuery[0].VALUE == 'true')]">
+				<flow-ref doc:name="dojFuaaProcessFileFlow"
+					doc:id="0f1a8ed6-007b-4232-8219-be09dc4d3c09"
+					name="processFile_Sub_Flow" />
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					doc:id="442b3be7-0df1-46e6-9937-ab99ee3253d7"
+					message="Not processing DOJ file - Either File is Empty Or DOJ_FUAA_UPDATE_FLAG is False in PRP" />
+			</otherwise>
+		</choice>
+		<logger level="INFO" doc:name="Logger"
+			doc:id="cef417f0-dafc-446a-90f0-141f2fbeea05"
+			message="Ending dojfuaaupdateFlow" />
+		<error-handler >
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="2fa2f268-49ee-4d1d-9b1a-1a494dc37ea8" >
+				<flow-ref doc:name="sendEmail_Notification" doc:id="e131fb25-b964-4b4f-98b4-4c7019ea2fdd" name="sendEmail_Notification" />
+				<logger level="ERROR" doc:name="Logger" doc:id="5ee3b0ca-9018-4fe0-ac03-feceab8b1973" message="Exception while dojfuaa update, email sent with error details" />
+			</on-error-propagate>
+		</error-handler>
+	</flow>
+	<flow name="dojfuaaupdateMainFlow"
+		doc:id="2f16bf9f-d1f2-4fa3-8882-3d80363b1048">
+		<scheduler doc:name="Scheduler"
+			doc:id="56eb2232-9d16-442b-a392-3df2ab3703e1">
+			<scheduling-strategy>
+				<cron expression="${cron.interval}" />
+			</scheduling-strategy>
+		</scheduler>
+		<logger level="INFO" doc:name="Logger"
+			doc:id="5bc0fd7f-d833-4bb4-aba3-5a3cb0d3051b"
+			message="Starting dojfuaaupdateMainFlow" />
+		<choice doc:name="Choice"
+			doc:id="164abdb5-d36b-4660-a254-8576915eb081">
+			<when expression='#[((now() as String {format: "dd"}) &gt;= 2) and ((now() as String {format: "dd"}) &lt;= 25)]'>
+				<flow-ref doc:name="Flow Reference" doc:id="5ee7c59c-7a9d-46d2-8daa-9656099d11bd" name="dojFuaaSFTPFlow"/>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					doc:id="b52b5785-cb16-449c-ab12-1fdda59605db"
+					message="Not Starting SFTP Flow - Run Date is out of range 2nd through 8th" />
+			</otherwise>
+		</choice>
+		<logger level="INFO" doc:name="Logger"
+			doc:id="27af2260-4cea-427d-8680-91686579560c"
+			message="Ending dojfuaaupdateMainFlow" />
+	</flow>
+	<flow name="dojFuaaSFTPFlow"
+		doc:id="4f91cafb-fc2b-4b9a-8508-2dcb809ff142">
+		<sftp:list doc:name="List" doc:id="6982865d-dcb3-4c01-aa20-f1569052149e" config-ref="SFTP_Config" directoryPath="${tempDOJ.sftp.path}"/>
+		<foreach doc:name="For Each" doc:id="97b3c006-3dee-416f-9477-cc6b6f85045a">
+			<sftp:read doc:name="Read" doc:id="ad1a2d09-bf89-43ba-a1cf-42fa7d915420" config-ref="SFTP_Config" path="#[attributes.path]"/>
+			<file:write doc:name="Write" doc:id="152b0185-edb2-4fdb-9f5e-f1e1f303fa24" path="#[p('tempDOJ.data') ++ attributes.fileName]" config-ref="IncomingFile" createParentDirectories="false"/>
+			<sftp:delete doc:name="Delete" doc:id="36ec46a3-98d4-440c-b8df-4d56979ba219" config-ref="SFTP_Config" path="#[attributes.path]"/>
+			<logger level="INFO" doc:name="Logger" doc:id="b14d5035-f43b-441a-a7ae-ce15ca3d27b1" message="#['\n&gt;&gt;&gt; \n&gt;&gt;&gt; DOJ SFTP retrieved file: ' ++ attributes.fileName ++ '\n&gt;&gt;&gt; ']" />
+		</foreach>
+	</flow>
+	<sub-flow name="processFile_Sub_Flow"
+		doc:id="f303eb48-f09c-4694-b712-c20727e48ee2">
+		<set-payload value="#[vars.originalPayload]" doc:name="Set Original  Payload" doc:id="3b6fb108-f9ff-4ed8-9f9f-5877b556ec3e" />
+		<ee:transform doc:name="Session Variables" doc:id="e5d3a2e5-3ab8-4685-a585-35d1571571df" >
+			<ee:variables>
+				<ee:set-variable variableName="sessionUpdatePFN" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionAlpha" ><![CDATA['ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionUpdateCIINum" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionUpdateFBINum" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionRecordAProcessFlag" ><![CDATA['N']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionRecordBProcessFlag" ><![CDATA['N']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionRecordCProcessFlag" ><![CDATA['N']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionKeyPFN" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionKeyName" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionKeyValue" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[0]]></ee:set-variable> 
+				<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable> 
+				<ee:set-variable variableName="userId" ><![CDATA['FUAA_PROXY']]></ee:set-variable> 
+				<ee:set-variable variableName="userPwd" ><![CDATA['ITDTEST']]></ee:set-variable> 
+				<ee:set-variable variableName="wsUserId" ><![CDATA['FUAA_PROXY']]></ee:set-variable> 
+				<ee:set-variable variableName="wsPassword" ><![CDATA['ITDTEST']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionTokenAvailableFlag" ><![CDATA['N']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionValidPFNFlag" ><![CDATA['N']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionDLNCount" ><![CDATA[0]]></ee:set-variable> 
+				<ee:set-variable variableName="sessionSSNCount" ><![CDATA[0]]></ee:set-variable> 
+				<ee:set-variable variableName="sessionUpdateCounter" ><![CDATA[0]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<set-variable value="#[[]]" doc:name="AKA Name"
+			doc:id="32d137da-cbca-441d-a19d-e1618f59975c" variableName="sessionAKAName" />
+		<set-variable value="#[[]]" doc:name="UpdateAKA"
+			doc:id="1591cefd-b8f6-4ccc-8177-e4512d7d4d09"
+			variableName="sessionUpdateAKA" />
+		<set-variable value="#[[]]" doc:name="Set Update DLN"
+			doc:id="d157f365-766a-43e0-bd03-4c25eaac14df"
+			variableName="sessionUpdateDLN" />
+		<set-variable value="#[[]]" doc:name="Set UpdateDLNState"
+			doc:id="f01fb4a4-e535-4903-937a-76db8d2a47bc"
+			variableName="sessionUpdateDLNState" />
+		<set-variable value="#[[]]" doc:name="SetUpdateSSN"
+			doc:id="7db8a8c1-a230-4beb-923c-2e14129ee775"
+			variableName="sessionUpdateSSN" />
+		<set-variable value="#[[]]" doc:name="Set RecordAKA"
+			doc:id="75ee1d96-02f8-41bc-8495-5a29c339e731"
+			variableName="sessionRecordAKA" />
+		<set-variable value="#[[]]" doc:name="Set AKACode"
+			doc:id="9ac47848-d5fc-40c4-875e-aba7a97ffdb9" variableName="sessionAKACode" />
+		<set-variable value="#[[]]" doc:name="Set AKALastName"
+			doc:id="a81ac426-29f9-4370-9c76-f61afc490b76"
+			variableName="sessionAKALastName" />
+		<set-variable value="#[[]]" doc:name="Set AKAFirstName"
+			doc:id="efe2868f-6f1b-47e9-953a-0498051c6c72"
+			variableName="sessionAKAFirstName" />
+		<set-variable value="#[[]]" doc:name="Set AKAMiddleName"
+			doc:id="83c34d22-29b6-4aae-875b-94c4bdcbe22e"
+			variableName="sessionAKAMiddleName" />
+		<set-variable value="#[[]]" doc:name="Set AKAGeneration"
+			doc:id="8b47dbbb-7ef7-45dd-9df8-cff5414a1db8"
+			variableName="sessionAKAGeneration" />
+		<set-variable value="#[[]]" doc:name="Set DLN"
+			doc:id="d34274a4-7375-4809-bffd-4241211dd0b1" variableName="sessionDLN" />
+		<set-variable value="#[[]]" doc:name="Set DLNState"
+			doc:id="6ae4c27a-696a-452b-a174-eb0f60c334d5" variableName="sessionDLNState" />
+		<set-variable value="#[[]]" doc:name="Set  SSN"
+			doc:id="498c89fa-c241-4e5c-8303-5c699f32627f" variableName="sessionSSN" />
+		<foreach doc:name="For Each" doc:id="bc59e13a-e703-4fb5-a6a4-71d7585eba80" collection='#[payload splitBy("\n")]'>
+			<ee:transform doc:name="Transform Message" doc:id="3d4017d0-deb8-40d9-b91d-f6930a6e0828">
+				<ee:message>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="recordType"><![CDATA[payload[0]]]></ee:set-variable>
+					<ee:set-variable variableName="tempSexCode"><![CDATA[payload[49]]]></ee:set-variable>
+					<ee:set-variable variableName="tempDOB"><![CDATA[payload[70 to 75]]]></ee:set-variable>
+					<ee:set-variable variableName="tempPFN"><![CDATA[payload[108 to 113]
+
+]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+			<choice doc:name="Choice" doc:id="f8e8db98-5a4f-43cf-aef5-ad63a78a33d1">
+				<when expression="#[vars.recordType == 'A']">
+					<logger level="INFO" doc:name="Logger" doc:id="be0dcf38-9bf6-4b9f-b61e-7b6caf3e0219" message="In processFile-Sub-Flow - Record Type A" />
+					<db:select doc:name="Check for PFN Validity" doc:id="31b837ce-0cce-481a-91df-70decc8b5705" config-ref="DB2_Config_OTS" target="defSelectQuery0">
+						<db:sql><![CDATA[SELECT DEF.PFN_X AS PFN_X, DEF.CII_NUM AS CII_NUM, DEF.FBI_NUM AS FBI_NUM, VARCHAR_FORMAT(DOB.BIRTH_DATE, 'YYMMDD') AS BIRTH_DATE, PHY.SEX_CD AS SEX_CD  
+FROM S1AOWN.S1VDEF0 DEF
+LEFT OUTER JOIN S1AOWN.S1VDOB0 DOB ON DEF.PFN_X = DOB.PFN_X AND DEF.DOB_PRIM_OCC_NUM = DOB.DOB_OCC_NUM
+LEFT OUTER JOIN S1AOWN.S1VPHY0 PHY ON DEF.PFN_X = PHY.PFN_X AND DEF.PHY_PRIM_OCC_NUM = PHY.PHY_OCC_NUM
+WHERE DEF.PFN_X = :tempPFN;]]></db:sql>
+						<db:input-parameters><![CDATA[#[{
+	"tempPFN": vars.tempPFN
+}]]]></db:input-parameters>
+					</db:select>
+					<choice doc:name="Choice" doc:id="d8f0f234-3bc2-4b0b-891a-c422b24638ad">
+						<when expression="#[sizeOf(vars.defSelectQuery0) &gt; 0]">
+							<ee:transform doc:name="Transform Message" doc:id="e404fff2-8bc8-46b3-9a4a-df38413b4fa9">
+								<ee:message>
+								</ee:message>
+								<ee:variables>
+									<ee:set-variable variableName="sessionValidPFNFlag"><![CDATA['Y']]></ee:set-variable>
+									<ee:set-variable variableName="sessionUpdatePFN"><![CDATA[vars.tempPFN]]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+							<choice doc:name="Choice" doc:id="9e777351-5aef-4ca5-9f24-7df1afd5836d">
+								<when expression="#[vars.defSelectQuery0[0].'BIRTH_DATE' != vars.tempDOB]">
+									<ee:transform doc:name="Set up for FUA Insert - 712" doc:id="7560c321-5d82-4d92-a6f3-c93e83541f8d">
+										<ee:message>
+										</ee:message>
+										<ee:variables>
+											<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.tempPFN]]></ee:set-variable>
+											<ee:set-variable variableName="sessionKeyName"><![CDATA['BIRTHDATE']]></ee:set-variable>
+											<ee:set-variable variableName="sessionKeyValue"><![CDATA[vars.tempDOB]]></ee:set-variable>
+											<ee:set-variable variableName="sessionCRIMSValue"><![CDATA[vars.defSelectQuery0[0].'BIRTH_DATE']]></ee:set-variable>
+											<ee:set-variable variableName="sessionErrorNumber"><![CDATA[712]]></ee:set-variable>
+											<ee:set-variable variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+									<flow-ref doc:name="insertFUAData-712" doc:id="96d59b32-3e63-41fd-bab9-5718810ee2ce" name="insertFUAData" />
+								</when>
+								<otherwise>
+									<logger level="INFO" doc:name="Logger" doc:id="db907cb4-005d-46c9-b513-cf85ee984dc6" />
+								</otherwise>
+							</choice>
+							<choice doc:name="Choice" doc:id="47d8c0cf-244f-4020-82e6-c92295a7f4fb">
+								<when expression="#[vars.defSelectQuery0[0].'SEX_CD' != vars.tempSexCode]">
+									<ee:transform doc:name="Set up for FUA Insert - 713" doc:id="6f0dea4f-ca04-49f9-8960-980f2e6b4f89">
+										<ee:variables>
+											<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.tempPFN]]></ee:set-variable>
+											<ee:set-variable variableName="sessionKeyName"><![CDATA['SEX CODE']]></ee:set-variable>
+											<ee:set-variable variableName="sessionKeyValue"><![CDATA[vars.tempSexCode]]></ee:set-variable>
+											<ee:set-variable variableName="sessionCRIMSValue"><![CDATA[vars.defSelectQuery0[0].'SEX_CD']]></ee:set-variable>
+											<ee:set-variable variableName="sessionErrorNumber"><![CDATA[713]]>
+											</ee:set-variable>
+											<ee:set-variable variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+									<flow-ref doc:name="insertFUAData-713" doc:id="ca1e500c-974d-4809-97f2-3635f90b2a0d" name="insertFUAData" />
+								</when>
+								<otherwise>
+									<logger level="INFO" doc:name="Logger" doc:id="820017f0-3ab8-4d42-81ae-b73951b63b41" />
+								</otherwise>
+							</choice>
+							<flow-ref doc:name="process_A_Sub_Flow" doc:id="23240644-087b-4b08-9177-9f4c3fcf8dd9" name="process_A_Sub_Flow" />
+						</when>
+						<otherwise>
+							<logger level="INFO" doc:name="Invalid PFN or not found in CRIMS " doc:id="bcbf2af2-860d-4012-9c81-60ebc2061e15" message="Invalid PFN or not found in CRIMS " />
+							<ee:transform doc:name="Set up for Invalid PFN Insert" doc:id="5addedb3-4851-4a65-8808-86312b07507e">
+								<ee:message>
+								</ee:message>
+								<ee:variables>
+									<ee:set-variable variableName="sessionValidPFNFlag"><![CDATA['N']]></ee:set-variable>
+									<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.tempPFN]]></ee:set-variable>
+									<ee:set-variable variableName="sessionKeyName"><![CDATA['PFN_X']]></ee:set-variable>
+									<ee:set-variable variableName="sessionKeyValue"><![CDATA[vars.tempPFN]]></ee:set-variable>
+									<ee:set-variable variableName="sessionCRIMSValue"><![CDATA['']]></ee:set-variable>
+									<ee:set-variable variableName="sessionErrorNumber"><![CDATA[701]]></ee:set-variable>
+									<ee:set-variable variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+							<flow-ref doc:name="Insert into FUA -701" doc:id="08a30368-6b91-44d7-aa42-ce723ed5eff9" name="insertFUAData" />
+						</otherwise>
+					</choice>
+				</when>
+				<when expression="#[(vars.recordType == 'B') and (vars.sessionValidPFNFlag == 'Y')]">
+					<logger level="INFO" doc:name="Record B" doc:id="79f17c1b-f915-4e23-b508-018ac7631930" message="In processFile-Sub-Flow - Record Type B" />
+					<flow-ref doc:name="process_B_Sub_Flow" doc:id="390e79d5-1091-4e8b-a2d7-08e08beea153" name="process_B_Sub_Flow" />
+				</when>
+				<when expression="#[(vars.recordType == 'C') and (vars.sessionValidPFNFlag == 'Y')]">
+					<logger level="INFO" doc:name="Record C" doc:id="23ea0342-a699-46dc-a91a-b529164ebe77" message="In processFile-Sub-Flow - Record Type C" />
+					<flow-ref doc:name="process_C_Sub_Flow" doc:id="a16018a8-ec67-468d-888b-e7cf181c5062" name="process_C_Sub_Flow" />
+				</when>
+				<otherwise>
+					<logger level="INFO" doc:name="Logger" doc:id="e8ec9a1f-0473-4994-b910-0ba2ccb11bc1" message="Invalid Record Type: #[vars.recordType]" />
+				</otherwise>
+			</choice>
+		</foreach>
+		<choice doc:name="Choice" doc:id="b1912be4-1096-48a3-a045-7790392ea83c">
+				<when expression="#[(vars.sessionRecordAProcessFlag=='Y') and (vars.sessionUpdateCIINum &gt; '' or vars.sessionUpdateFBINum &gt; '' or (sizeOf(vars.sessionRecordAKALastName default &quot;&quot;)) &gt; 0 or (sizeOf(vars.sessionUpdateDLN default &quot;&quot;)) &gt; 0 or (sizeOf(vars.sessionUpdateSSN default &quot;&quot;)) &gt; 0)]">
+					<ee:transform doc:name="Transform Message" doc:id="1f420391-d004-4ce6-9736-4e40ccabd532">
+						<ee:message>
+						</ee:message>
+						<ee:variables>
+							<ee:set-variable variableName="sessionUpdatePFN"><![CDATA[if (vars.sessionUpdatePFN== "") vars.tempPFN else vars.sessionUpdatePFN]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<flow-ref doc:name="Update Person" doc:id="c3757e8b-f202-46dd-bfc9-d5f708b8c786" name="updatePerson" />
+				</when>
+				<otherwise>
+					<logger level="INFO" doc:name="Logger" doc:id="fcdc4bfe-a262-4608-8e92-22f4487e9777" message="No Updates for the Last Record" />
+				</otherwise>
+			</choice>
+	</sub-flow>
+	<sub-flow name="process_A_Sub_Flow"
+		doc:id="5d5258fc-52b3-497c-b57a-707e2e5c804b">
+		<logger level="INFO" doc:name="Logger"
+			doc:id="d04871ca-2559-4b1e-a046-b82197c6a0ba"
+			message="In processA-Sub-Flow -1: #[vars.sessionPFN]" />
+		<choice doc:name="Choice"
+			doc:id="959d6f29-2302-4e34-bf17-068c25c379ce">
+			<when expression="#[vars.sessionRecordBProcessFlag =='Y']">
+				<flow-ref doc:name="process_AKA_Sub_Flow"
+					doc:id="637e8e3b-1e35-4efb-884f-7b6ae6976bfd"
+					name="process_AKA_Sub_Flow" />
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					doc:id="2549c896-d988-4fe4-95e1-ced2b8212c8b"
+					message="Continue Processing Record A " />
+			</otherwise>
+		</choice>
+		<set-variable value='#[vars.sessionUpdateSSN default ""]' doc:name="Set sessionUpdateSSN" doc:id="e6ab70df-617d-428e-aaed-5b3682e088e7" variableName="sessionUpdateSSN"/>
+		<set-variable value='#[vars.sessionUpdateDLN default ""]' doc:name="Set sessionUpdateDLN" doc:id="f5a30cb7-3ed4-4e73-91bf-9996a3883a9b" variableName="sessionUpdateDLN"/>
+		<set-variable value='#[vars.sessionRecordAKALastName default ""]' doc:name="Set sessionRecordAKALastName" doc:id="1b314c74-5d83-4065-8837-e631b8d4a5cd" variableName="sessionRecordAKALastName"/>
+		<ee:transform doc:name="Transform Message"
+			doc:id="8417e4af-6d56-48b3-b0e7-9124932f3336">
+			<ee:variables>
+				<ee:set-variable variableName="recordNum" ><![CDATA[payload[1 to 7]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordSeqNum" ><![CDATA[payload[8 to 9] ]]></ee:set-variable> 
+					<ee:set-variable variableName="recordFill" ><![CDATA[payload[10 to 10]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordCIINum" ><![CDATA[payload[11 to 18]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordName" ><![CDATA[payload[19 to 48]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordSex" ><![CDATA[payload[49 to 49]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordRace" ><![CDATA[payload[50 to 50]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordHeight" ><![CDATA[payload[51 to 53]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordWeight" ><![CDATA[payload[54 to 56]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordEyeColor" ><![CDATA[payload[57 to 57]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordHairColor" ><![CDATA[payload[58 to 58]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordPOB" ><![CDATA[payload[59 to 60]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordFBINum" ><![CDATA[payload[61 to 69]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordDOB" ><![CDATA[payload[70 to 75]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordDOE" ><![CDATA[payload[76 to 81]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordOriAgy" ><![CDATA[payload[82 to 87]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordArrAgy" ><![CDATA[payload[88 to 93]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordPFN" ><![CDATA[payload[108 to 113]]]></ee:set-variable> 
+					<ee:set-variable variableName="recordNameCode" ><![CDATA[payload[114 to 115]]]></ee:set-variable> 
+					<ee:set-variable variableName="emptyCIINum" ><![CDATA['']]></ee:set-variable> 
+					<ee:set-variable variableName="emptyFBINum" ><![CDATA['']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<choice doc:name="Choice"
+			doc:id="bf19c715-f840-465d-9fd6-27d079088800">
+			<when
+				expression="#[(vars.sessionRecordAProcessFlag=='Y') and (vars.sessionUpdateCIINum &gt; '' or vars.sessionUpdateFBINum &gt; '' or sizeOf(vars.sessionRecordAKALastName) &gt; 0 or sizeOf(vars.sessionUpdateDLN) &gt; 0 or sizeOf(vars.sessionUpdateSSN) &gt; 0)]">
+				<flow-ref doc:name="Update Person"
+					doc:id="9326d7c7-0efa-4d4d-b095-128553780270" name="updatePerson" />
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					doc:id="df7701f1-8266-4829-8187-6cf1376950d2"
+					message="Continue Processing Record A " />
+				<choice doc:name="Choice" doc:id="10db3f2d-c8aa-4227-8283-ea3387eb42bc" >
+					<when expression="#[vars.sessionRecordAProcessFlag == 'Y']">
+						<remove-variable doc:name="sessionRecordAKA" doc:id="9b4e3c38-4e9f-4b2d-b453-976d2962cfff" variableName="sessionRecordAKA"/>
+						<remove-variable doc:name="sessionRecordAKACode" doc:id="3c9ec653-b134-4e3e-9510-ca5b9667f625" variableName="sessionRecordAKACode"/>
+						<remove-variable doc:name="sessionRecordAKALastName" doc:id="ad696e86-37f9-4a23-9ff2-ae9a9f1b06de" variableName="sessionRecordAKALastName"/>
+						<remove-variable doc:name="sessionRecordAKAFirstName" doc:id="33895be8-c0da-49ee-8d39-c8276982e353" variableName="sessionRecordAKAFirstName"/>
+						<remove-variable doc:name="sessionRecordAKAMiddleName" doc:id="ff2f23fb-8903-458d-aa0c-d8a279b70e45" variableName="sessionRecordAKAMiddleName"/>
+						<remove-variable doc:name="sessionRecordAKAGeneration" doc:id="c119857a-a3b6-4e13-8e2f-ac050df9b5a3" variableName="sessionRecordAKAGeneration"/>
+						<remove-variable doc:name="sessionUpdateAKA" doc:id="afa86e0a-9818-4951-a048-f33e7f47a5a2" variableName="sessionUpdateAKA"/>
+						<remove-variable doc:name="sessionRecordDLN" doc:id="414f8ded-5533-4889-acc2-cce593d37583" variableName="sessionRecordDLN"/>
+						<remove-variable doc:name="sessionRecordDLNState" doc:id="f017f609-4bf8-4d3f-821b-1970304b8d1d" variableName="sessionRecordDLNState"/>
+						<remove-variable doc:name="sessionRecordSSN" doc:id="4a9f0bcd-c6ce-449b-9835-2edd52e19af0" variableName="sessionRecordSSN"/>
+						<remove-variable doc:name="sessionUpdateDLN" doc:id="499d9deb-c9d9-4201-bb6b-2e17d3b0284c" variableName="sessionUpdateDLN"/>
+						<remove-variable doc:name="sessionUpdateDLNState" doc:id="1822a0fd-3368-44b1-b847-5d45a3d35644" variableName="sessionUpdateDLNState"/>
+						<remove-variable doc:name="sessionUpdateSSN" doc:id="00b566f1-9663-473a-8dd7-02525f1ba099" variableName="sessionUpdateSSN"/>
+						<ee:transform doc:name="Transform Message" doc:id="0ec88400-9374-410d-a335-d0baadce69d9" >
+							<ee:variables>
+								<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA['']]></ee:set-variable> 
+								<ee:set-variable variableName="sessionUpdateCIINum" ><![CDATA['']]></ee:set-variable> 
+								<ee:set-variable variableName="sessionUpdateFBINum" ><![CDATA['']]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+					</when>
+				</choice>
+			</otherwise>
+		</choice>
+		<ee:transform doc:name="Transform Message"
+			doc:id="485e5f85-8017-4a92-b3c5-ba1b2b69444f">
+			<ee:variables>
+				<ee:set-variable variableName="sessionRecordAProcessFlag" ><![CDATA['Y']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionPFN" ><![CDATA[vars.tempPFN]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<db:select doc:name="Get CII_NUM and FBI_NUM from DEF"
+			doc:id="fbf8f4bd-7e73-4483-a1ff-9d9758840da4"
+			config-ref="DB2_Config_OTS" target="defSelectQuery">
+			<db:sql><![CDATA[SELECT PFN_X, CII_NUM, FBI_NUM  
+FROM S1AOWN.S1VDEF0 
+WHERE PFN_X = :sessionPFN]]></db:sql>
+			<db:input-parameters ><![CDATA[#[{
+	"sessionPFN": vars.sessionPFN
+}]]]></db:input-parameters>
+		</db:select>
+		<logger message="In processA-Sub-Flow -2" level="INFO"
+			doc:name="Logger" />
+		<choice doc:name="Check for CII and FBI in CORPUS">
+			<when
+				expression="#[(sizeOf(vars.defSelectQuery) &gt; 0) and (vars.defSelectQuery[0].'CII_NUM' == vars.emptyCIINum) and (vars.defSelectQuery[0].'FBI_NUM' == vars.emptyFBINum)]">
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+				<logger level="INFO"
+					doc:name="Both CII and FBI Numbers are Empty in CORPUS" />
+				<choice doc:name="Check If Input CII And FBI Are Available">
+					<when
+						expression="#[(vars.recordCIINum &gt; vars.emptyCIINum) and (vars.recordFBINum &gt; vars.emptyFBINum)]">
+						<logger message="No CII  in DEF for this PFN" level="INFO"
+							doc:name="Both Input CII and FBI Num available" />
+						<flow-ref name="updateCIINum" doc:name="updateCIINum" />
+						<flow-ref name="updateFBINum" doc:name="updateFBINum" />
+					</when>
+					<when
+						expression="#[(vars.recordCIINum == vars.emptyCIINum) and (vars.recordFBINum == vars.emptyFBINum)]">
+						<logger message="No CII  and FBI Number for this PFN: "
+							level="INFO" doc:name="Both Input CII and FBI Num Not Available" />
+					</when>
+					<when
+						expression="#[(vars.recordCIINum &gt; vars.emptyCIINum) and (vars.recordFBINum == vars.emptyFBINum)]">
+						<flow-ref name="updateCIINum" doc:name="updateCIINum" />
+					</when>
+					<when
+						expression="#[(vars.recordCIINum == vars.emptyCIINum) and (vars.recordFBINum &gt; vars.emptyFBINum)]">
+						<flow-ref name="updateFBINum" doc:name="updateFBINum" />
+					</when>
+					<otherwise>
+						<logger
+							message="#[&quot;CII found  in DEF for this PFN: - $(vars.recordPFN)&quot;]"
+							level="INFO" doc:name="Logger" />
+					</otherwise>
+				</choice>
+			</when>
+			<when
+				expression="#[(sizeOf(vars.defSelectQuery) &gt; 0) and (vars.defSelectQuery[0].'CII_NUM' &gt; vars.emptyCIINum) and (vars.defSelectQuery[0].'FBI_NUM' &gt; vars.emptyFBINum)]">
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+				<logger
+					message="#[&quot;Both CII Num and FBI Num exists for this PFN: - $(vars.recordPFN)&quot;]"
+					level="INFO" doc:name="Both CII Num and FBI Num exists " />
+				<choice doc:name="Check If Input CII And FBI Are Available">
+					<when
+						expression="#[(vars.recordCIINum &gt; vars.emptyCIINum) and (vars.recordFBINum &gt; vars.emptyFBINum)]">
+						<logger message="No CII  in DEF for this PFN" level="INFO"
+							doc:name="Both Input CII and FBI Num available" />
+						<ee:transform doc:name="Transform Message" doc:id="545105b2-6927-4060-95b9-272fb72f007e">
+							<ee:variables>
+								<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionPFN]]></ee:set-variable> 
+								<ee:set-variable variableName="sessionKeyName" ><![CDATA['CII_NUM']]></ee:set-variable> 
+								<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.recordCIINum]]></ee:set-variable> 
+								<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA[vars.defSelectQuery[0].'CII_NUM']]></ee:set-variable> 
+								<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[702]]></ee:set-variable> 
+								<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+						<flow-ref name="insertFUAData"
+							doc:name="Insert into FUA - 702" />
+						<ee:transform doc:name="Transform Message" doc:id="3a34bfc5-f3da-4513-a96a-e94fa1a3c9ab">
+							<ee:variables>
+								<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionPFN]]></ee:set-variable> 
+								<ee:set-variable variableName="sessionKeyName" ><![CDATA['FBI_NUM']]></ee:set-variable> 
+								<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.recordFBINum]]></ee:set-variable> 
+								<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA[vars.defSelectQuery[0].'FBI_NUM']]></ee:set-variable> 
+								<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[703]]></ee:set-variable> 
+								<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+						<flow-ref name="insertFUAData"
+							doc:name="Insert into FUA - 703" />
+					</when>
+					<when
+						expression="#[(vars.recordCIINum == vars.emptyCIINum) and (vars.recordFBINum == vars.emptyFBINum)]">
+						<logger message="No CII  and FBI Number for this PFN: "
+							level="INFO" doc:name="Both Input CII and FBI Num Not Available" />
+					</when>
+					<when
+						expression="#[(vars.recordCIINum &gt; vars.emptyCIINum) and (vars.recordFBINum == vars.emptyFBINum)]">
+						<flow-ref name="updateCIINum" doc:name="updateCIINum" />
+					</when>
+					<when
+						expression="#[(vars.recordCIINum == vars.emptyCIINum) and (vars.recordFBINum &gt; vars.emptyFBINum)]">
+						<flow-ref name="updateFBINum" doc:name="updateFBINum" />
+					</when>
+					<otherwise>
+						<logger
+							message="#[&quot;CII found  in DEF for this PFN: - $(vars.recordPFN)&quot;]"
+							level="INFO" doc:name="Logger" />
+					</otherwise>
+				</choice>
+			</when>
+			<when
+				expression="#[(sizeOf(vars.defSelectQuery) &gt; 0) and (vars.defSelectQuery[0].'CII_NUM' == vars.emptyCIINum) and (vars.defSelectQuery[0].'FBI_NUM' &gt; vars.emptyFBINum)]">
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+				<logger
+					message="Only CII Num is empty in CORPUS  for this PFN: "
+					level="INFO" doc:name="Only CII Num is empty in CORPUS " />
+				<choice doc:name="Choice">
+					<when expression="#[vars.recordCIINum &gt; vars.emptyCIINum]">
+						<flow-ref name="updateCIINum" doc:name="updateCIINum" />
+					</when>
+					<otherwise>
+						<logger level="INFO" doc:name="Logger"
+							message="Continue Processing Record A " />
+					</otherwise>
+				</choice>
+			</when>
+			<when
+				expression="#[(sizeOf(vars.defSelectQuery) &gt; 0) and (vars.defSelectQuery[0].&quot;CII_NUM&quot; &gt; vars.emptyCIINum) and (vars.defSelectQuery[0].'FBI_NUM' == vars.emptyFBINum)]">
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+				<logger
+					message="Only FBI Num is Empty in CORPUS for this PFN:"
+					level="INFO" doc:name="Only FBI Num is Empty in CORPUS" />
+				<choice doc:name="Choice">
+					<when expression="#[vars.recordFBINum &gt; vars.emptyFBINum]">
+						<flow-ref name="updateFBINum" doc:name="updateFBINum" />
+					</when>
+					<otherwise>
+						<logger level="INFO" doc:name="Logger"
+							message="Continue Processing Record A " />
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					message="Continue Processing Record A " />
+			</otherwise>
+		</choice>
+	</sub-flow>
+	<sub-flow name="insertFUAData"
+		doc:id="701453b7-8df8-4b17-9c50-1fdfcdbe41e5">
+		<logger level="INFO" doc:name="Logger"
+			doc:id="9eaa7754-7dbb-4392-a973-784593959787" />
+		<choice doc:name="Choice"
+			doc:id="3b89ca87-721e-401c-94a3-c45c838d1d43">
+			<when expression="#[vars.sessionErrorNumber == 0]">
+				<db:insert doc:name="Insert into FUA1"
+					doc:id="2e299e4e-2fe9-4b82-9fb7-418e546fab13" target="insertToFUA1" config-ref="DB2_Config_OTS">
+					<db:sql><![CDATA[INSERT INTO S1AOWN.S1VFUA0 
+(PFN_X, KEY_NAME, KEY_VALUE, LAST_UPDATE_ID, LAST_UPDATE_STAMP)
+VALUES(:sessionKeyPFN, :sessionKeyName, :sessionKeyValue, :sessionUpdateID, 
+:currentTimestamp);]]></db:sql>
+					<db:input-parameters ><![CDATA[#[{sessionKeyPFN: vars.sessionKeyPFN,
+sessionKeyName: vars.sessionKeyName, 
+sessionKeyValue: vars.sessionKeyValue, 
+sessionUpdateID: vars.sessionUpdateID, 
+currentTimestamp: now() as String {format : "yyyy-MM-dd HH:mm:ss.ms"}
+}]]]></db:input-parameters>
+				</db:insert>
+			</when>
+			<otherwise>
+				<db:insert doc:name="Insert into FUA2"
+					doc:id="bd31ac80-56cb-40fb-9bcc-202e49b0be1e" target="insertToFUA2" config-ref="DB2_Config_OTS">
+					<db:sql><![CDATA[INSERT INTO S1AOWN.S1VFUA0 
+(PFN_X, KEY_NAME, KEY_VALUE, CRIMS_VALUE, ERROR_NUMBER, LAST_UPDATE_ID, LAST_UPDATE_STAMP)
+VALUES(:PFN_X, :KEY_NAME, :KEY_VALUE, :CRIMS_VALUE, :ERROR_NUMBER, :LAST_UPDATE_ID, 
+:LAST_UPDATE_STAMP);]]></db:sql>
+					<db:input-parameters ><![CDATA[#[{ PFN_X: vars.sessionKeyPFN, 
+	KEY_NAME: vars.sessionKeyName, 
+	KEY_VALUE: vars.sessionKeyValue, 
+	CRIMS_VALUE: vars.sessionCRIMSValue, 
+	ERROR_NUMBER: vars.sessionErrorNumber, 
+	LAST_UPDATE_ID : vars.sessionUpdateID, 
+	LAST_UPDATE_STAMP : now() as String {format : "yyyy-MM-dd HH:mm:ss.ms"}
+}]]]></db:input-parameters>
+				</db:insert>
+			</otherwise>
+		</choice>
+		<logger level="INFO" doc:name="Logger"
+			doc:id="f11fdb77-e3a9-43ee-9f22-4aae206551bb"
+			message="Insert Succesful" />
+	</sub-flow>
+	<sub-flow name="process_B_Sub_Flow">
+		<logger
+			message="#[&quot;In processB-Sub-Flow -1: $(vars.sessionPFN)&quot;]"
+			level="INFO" doc:name="Logger" />
+		<set-variable variableName="recordAKA" value="#[[]]"
+			doc:name="Record AKA" />
+		<set-variable variableName="recordAKACode" value="#[[]]"
+			doc:name="Record AKA Code" />
+		<ee:transform doc:name="Expression"
+			doc:id="eb0b5360-66d9-447c-8748-a91bdbcc5565">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="akaRecordNum"><![CDATA[%dw 2.0
+output application/json
+---
+payload[12 to 13]]]></ee:set-variable>
+				<ee:set-variable
+					variableName="sessionRecordBProcessFlag"><![CDATA['Y']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<choice doc:name="Choice">
+			<when
+				expression="#[vars.akaRecordNum == '02' or vars.akaRecordNum == '12' or vars.akaRecordNum == '22' or vars.akaRecordNum == '32' or vars.akaRecordNum == '42' or vars.akaRecordNum == '52' or vars.akaRecordNum == '62' or vars.akaRecordNum == '72' or vars.akaRecordNum == '82' or vars.akaRecordNum == '92']">
+				<ee:transform doc:name="Transform Message"
+					doc:id="3778ff9a-f0c8-4415-9739-7a258cba32b0">
+					<ee:message>
+
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="recordAKARowCount1"><![CDATA[payload[10 to 11]]]></ee:set-variable>
+					
+</ee:variables>
+				</ee:transform>
+				<set-variable value='#[{&#10;	sessionRecordAKACode: vars.sessionRecordAKACode default [],&#10;	sessionRecordAKA: vars.sessionRecordAKA default [],&#10;}]' doc:name="Set Variable" doc:id="24fa5993-8224-4353-bf6c-c7304449318b" variableName="temp"/>
+				<scripting:execute engine="Groovy"
+					doc:name="Process AKA Row"
+					doc:id="8c70e000-7e16-4839-ab23-61f8d0f8f9a6" target="temp">
+					<scripting:code><![CDATA[if((payload.toString().substring(12,14) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(14,44))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(12,14)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(14,44)));
+}
+if((payload.toString().substring(44,46) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(46,76))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(44,46)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(46,76)));
+}
+if((payload.toString().substring(76,78) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(78,108))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(76,78)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(78,108)));
+}
+if((payload.toString().substring(108,110) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(110,140))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(108,110)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(110,140)));
+}
+if((payload.toString().substring(140,142) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(142,172))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(140,142)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(142,172)));
+}
+if((payload.toString().substring(172,174) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(174,204))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(172,174)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(174,204)));
+}
+if((payload.toString().substring(204,206) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(206,236))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(204,206)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(206,236)));
+}
+if((payload.toString().substring(236,238) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(238,268))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(236,238)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(238,268)));
+}
+if((payload.toString().substring(268,270) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(270,300))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(268,270)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(270,300)));
+}
+if((payload.toString().substring(300,302) > '  ') && (!vars.temp.sessionRecordAKA.contains(payload.toString().substring(302,332))))
+{
+vars.temp.putAt('sessionRecordAKACode',vars.temp.sessionRecordAKACode + (payload.toString().substring(300,302)));
+vars.temp.putAt('sessionRecordAKA',vars.temp.sessionRecordAKA + (payload.toString().substring(302,332)));
+}
+return vars.temp;]]></scripting:code>
+				
+</scripting:execute>
+				<set-variable value="#[vars.temp.sessionRecordAKACode]" doc:name="Set sessionRecordAKACode" doc:id="5ad00dd2-b05b-4294-aacd-680a59653631" variableName="sessionRecordAKACode"/>
+				<set-variable value="#[vars.temp.sessionRecordAKA]" doc:name="Set sessionRecordAKA" doc:id="efb60539-1b54-40da-9346-4ab02b28f275" variableName="sessionRecordAKA" />
+			
+</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					message="Invalid Record B" />
+			</otherwise>
+		</choice>
+		<ee:transform doc:name="Transform Message"
+			doc:id="f8f21405-c472-4896-9267-db79910471df">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable
+					variableName="sessionRecordBProcessFlag"><![CDATA['Y']]></ee:set-variable>
+				<ee:set-variable variableName="recordNum"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,1,9)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordFill"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,9,10)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACount"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,10,12)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode1"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,12,14)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA1"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,14,44)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode2"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,44,46)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA2"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,46,76)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode3"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,76,78)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA3"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,78,108)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode4"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,108,110)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA4"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,110,140)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode5"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,140,142)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA5"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,142,172)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode6"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,172,174)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA6"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/json
+---
+substring(payload,174,204)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode7"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,204,206)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA7"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,206,236)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode8"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,236,238)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA8"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,238,268)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode9"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,268,270)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA9"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,270,300)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKACode10"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,300,302)]]></ee:set-variable>
+
+				<ee:set-variable variableName="recordAKA10"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,302,332)]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<validation:validate-size
+			value="#[vars.recordAKA1]" min="1" max="30" doc:name="Validation" />
+	</sub-flow>
+	<sub-flow name="process_C_Sub_Flow" doc:id="4cf89e15-86b4-436d-a201-2186177b3f95">
+		<logger
+			message='#["In processC-Sub-Flow -1: $(vars.sessionPFN)"]'
+			level="INFO" doc:name="Logger" />
+		<choice doc:name="Choice">
+			<when
+				expression="#[vars.sessionRecordBProcessFlag == 'Y']">
+				<flow-ref name="process_AKA_Sub_Flow"
+					doc:name="Process AKA_Sub_Flow" />
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					message="Continue Processing Record C" />
+			</otherwise>
+		</choice>
+		<ee:transform doc:name="Transform Message"
+			doc:id="1ffabbdc-0921-4df7-ae80-03df9da8e8db">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="ssnCount"><![CDATA[0]]></ee:set-variable>
+				<ee:set-variable variableName="dlnCount"><![CDATA[0]]></ee:set-variable>
+				<ee:set-variable variableName="dlnssnSize"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,10,12)]]></ee:set-variable>
+
+				<ee:set-variable variableName="dlnssnType"><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/java
+---
+substring(payload,12,15)]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<choice doc:name="Choice">
+			<when expression="#[vars.dlnssnType == 'CDL']">
+				<db:select config-ref="DB2_Config_OTS"
+					doc:name="Select DLN Count for this PFN"
+					target="dlnSelectCountQuery">
+					<db:sql><![CDATA[SELECT COUNT(PFN_X) FROM S1AOWN.S1VDLN0  WHERE PFN_X = :sessionPFN;]]></db:sql>
+					<db:input-parameters ><![CDATA[#[{
+	"sessionPFN": vars.sessionPFN
+}]]]></db:input-parameters>
+				
+</db:select>
+				<choice doc:name="Choice">
+					<when
+						expression='#[vars.dlnSelectCountQuery[0]."1" &lt; 9]'>
+						<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+							expression. -->
+						<!-- For more information refer to: -->
+						<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+						<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+						<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+						<set-variable value='#[{&#10;	sessionRecordDLN : vars.sessionRecordDLN default [],	&#10;	sessionRecordDLNState : vars.sessionRecordDLNState default []&#10;	&#10;}]' doc:name="Set temp" doc:id="458905c8-b00f-4eb9-8a01-32a36c3fca51" variableName="temp"/>
+						<set-variable value="#[vars.dlnSelectCountQuery[0].'1']" doc:name="Set dlnSelectCountQueryValue" doc:id="3348e905-8bc4-473e-b598-e9ca796d5a03" variableName="sessionDLNCount"/>
+						<set-variable value='#[vars.sessionRecordDLN default []]' doc:name="Set sessionRecordDLN" doc:id="79de5fbc-f8e7-4c80-8640-dee9bcd157e2" variableName="sessionRecordDLN"/>
+						<set-variable value='#[vars.sessionRecordDLNState default []]' doc:name="Set sessionRecordDLNState" doc:id="e091eede-9539-48d2-82ec-bfade23f2495" variableName="sessionRecordDLNState"/>
+						<scripting:execute doc:name="Process DLN"
+							doc:id="750da79b-58c1-49b6-990b-0e498ecfc813" engine="Groovy" target="temp">
+							<scripting:code><![CDATA[
+if((vars.dlnssnSize=='01') && (!vars.sessionRecordDLN.contains(payload.toString().substring(15,23))))
+   {vars.temp.putAt('sessionRecordDLN',vars.temp.sessionRecordDLN + (payload.toString().substring(15,23)));
+      if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       {
+         vars.temp.put('sessionRecordDLNState',vars.sessionRecordDLNState + (payload.toString().substring(15,17) ));
+       }
+    else
+       {
+         vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+       }
+   }
+if(vars.dlnssnSize=='02')
+{
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+}
+if(vars.dlnssnSize=='03')
+{
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+}
+if(vars.dlnssnSize=='04')
+{
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(51,59)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,59)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(51,52))  && vars.sessionAlpha.contains(payload.toString().substring(52,53)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,53) ));
+       		}
+    		else
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+}
+if(vars.dlnssnSize=='05')
+{
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(51,59)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,59)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(51,52))  && vars.sessionAlpha.contains(payload.toString().substring(52,53)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,53) ));
+       		}
+    		else
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(63,71)))
+	{
+	 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,71)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(63,64))  && vars.sessionAlpha.contains(payload.toString().substring(64,65)))
+		{
+		 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,65) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+}
+if(vars.dlnssnSize=='06')
+{
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(51,59)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,59)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(51,52))  && vars.sessionAlpha.contains(payload.toString().substring(52,53)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,53) ));
+       		}
+    		else
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(63,71)))
+	{
+	 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,71)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(63,64))  && vars.sessionAlpha.contains(payload.toString().substring(64,65)))
+		{
+		 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,65) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(75,83)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,83)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(75,76))  && vars.sessionAlpha.contains(payload.toString().substring(76,77)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,77) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+	}
+}
+if(vars.dlnssnSize=='07')
+{
+		if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(51,59)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,59)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(51,52))  && vars.sessionAlpha.contains(payload.toString().substring(52,53)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,53) ));
+       		}
+    		else
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(63,71)))
+	{
+	 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,71)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(63,64))  && vars.sessionAlpha.contains(payload.toString().substring(64,65)))
+		{
+		 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,65) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(75,83)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,83)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(75,76))  && vars.sessionAlpha.contains(payload.toString().substring(76,77)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,77) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(87,95)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,95)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(87,88))  && vars.sessionAlpha.contains(payload.toString().substring(88,89)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,89) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+}
+
+if(vars.dlnssnSize=='08')
+{
+		if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(51,59)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,59)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(51,52))  && vars.sessionAlpha.contains(payload.toString().substring(52,53)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,53) ));
+       		}
+    		else
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(63,71)))
+	{
+	 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,71)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(63,64))  && vars.sessionAlpha.contains(payload.toString().substring(64,65)))
+		{
+		 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,65) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(75,83)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,83)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(75,76))  && vars.sessionAlpha.contains(payload.toString().substring(76,77)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,77) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(87,95)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,95)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(87,88))  && vars.sessionAlpha.contains(payload.toString().substring(88,89)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,89) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(99,107)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(99,107)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(99,100))  && vars.sessionAlpha.contains(payload.toString().substring(100,101)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(99,101) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+}
+if(vars.dlnssnSize=='09')
+{
+			if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(51,59)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,59)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(51,52))  && vars.sessionAlpha.contains(payload.toString().substring(52,53)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,53) ));
+       		}
+    		else
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(63,71)))
+	{
+	 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,71)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(63,64))  && vars.sessionAlpha.contains(payload.toString().substring(64,65)))
+		{
+		 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,65) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(75,83)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,83)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(75,76))  && vars.sessionAlpha.contains(payload.toString().substring(76,77)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,77) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(87,95)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,95)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(87,88))  && vars.sessionAlpha.contains(payload.toString().substring(88,89)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,89) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(99,107)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(99,107)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(99,100))  && vars.sessionAlpha.contains(payload.toString().substring(100,101)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(99,101) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(111,119)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(111,119)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(111,112))  && vars.sessionAlpha.contains(payload.toString().substring(112,113)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(111,113) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+}
+if(vars.dlnssnSize=='10')
+{
+				if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(15,23)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(15,23)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(15,16))  && vars.sessionAlpha.contains(payload.toString().substring(16,17)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(15,17) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +('CA' ));
+    		}
+    	}
+    	if(!vars.sessionRecordDLN.contains(payload.toString().substring(27,35)))
+	{
+		vars.temp.putAt('sessionRecordDLN', vars.sessionRecordDLN +(payload.toString().substring(27,35)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(27,28))  && vars.sessionAlpha.contains(payload.toString().substring(28,29)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(27,29) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+    }
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(39,47)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(39,47)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(39,40))  && vars.sessionAlpha.contains(payload.toString().substring(40,41)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState +(payload.toString().substring(39,41) ));
+       		}
+    		else
+    		{
+    		     vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(51,59)))
+	{
+ 		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,59)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(51,52))  && vars.sessionAlpha.contains(payload.toString().substring(52,53)))
+       		{
+       		  vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(51,53) ));
+       		}
+    		else
+       		{
+       		  vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(63,71)))
+	{
+	 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,71)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(63,64))  && vars.sessionAlpha.contains(payload.toString().substring(64,65)))
+		{
+		 	vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(63,65) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+       	}
+       	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(75,83)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,83)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(75,76))  && vars.sessionAlpha.contains(payload.toString().substring(76,77)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(75,77) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+       		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(87,95)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,95)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(87,88))  && vars.sessionAlpha.contains(payload.toString().substring(88,89)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(87,89) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(99,107)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(99,107)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(99,100))  && vars.sessionAlpha.contains(payload.toString().substring(100,101)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(99,101) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(111,119)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(111,119)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(111,112))  && vars.sessionAlpha.contains(payload.toString().substring(112,113)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(111,113) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+	if(!vars.temp.sessionRecordDLN.contains(payload.toString().substring(123,131)))
+	{
+		vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(123,131)));
+		if (vars.sessionAlpha.contains(payload.toString().substring(123,124))  && vars.sessionAlpha.contains(payload.toString().substring(124,125)))
+		{
+			vars.temp.putAt('sessionRecordDLN',vars.sessionRecordDLN +(payload.toString().substring(123,125) ));
+		}
+		else
+		{
+			vars.temp.putAt('sessionRecordDLNState',vars.sessionRecordDLNState + ('CA' ));
+		}
+	}
+}
+return vars.temp;
+vars.dlnItem = 0;]]></scripting:code>
+						</scripting:execute>
+						<set-variable value="#[vars.temp.sessionRecordDLN]" doc:name="Set sessionRecordDLN" doc:id="ee456d9a-e863-4b68-80e0-e8afc22b6d1b" variableName="sessionRecordDLN"/>
+						<set-variable value="#[vars.temp.sessionRecordDLNState]" doc:name="Set sessionRecordDLNState" doc:id="d6d752a5-5cb0-4e95-bb1c-fb7ee7d92bee" variableName="sessionRecordDLNState" />
+						<flow-ref name="process_DLN_Sub_Flow"
+							doc:name="process_DLN_Sub_Flow" />
+					
+</when>
+					<when
+						expression='#[vars.dlnSelectCountQuery[0]."1" &gt;= 9]'>
+						<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+							expression. -->
+						<!-- For more information refer to: -->
+						<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+						<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+						<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+						<ee:transform doc:name="Set for FUA Insert - 706"
+							doc:id="08451d5c-6cd6-49d3-b0e5-a959d8abb0b6">
+							<ee:message>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.sessionPFN]]></ee:set-variable>
+								<ee:set-variable variableName="sessionKeyName"><![CDATA['DRIVER_LIC_NUM']]></ee:set-variable>
+								<ee:set-variable
+									variableName="sessionCRIMSValue"><![CDATA['']]></ee:set-variable>
+								<ee:set-variable
+									variableName="sessionErrorNumber"><![CDATA[70]]></ee:set-variable>
+								<ee:set-variable variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+								<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.dlnSelectCountQuery[0]."1"]]></ee:set-variable>
+							
+</ee:variables>
+						</ee:transform>
+						<flow-ref name="insertFUAData" doc:name="Insert FUA Data" />
+					</when>
+					<otherwise>
+						<logger level="INFO" doc:name="Logger" />
+					</otherwise>
+				</choice>
+			</when>
+			<when expression="#[vars.dlnssnType == 'SOC']">
+				<db:select config-ref="DB2_Config_OTS"
+					doc:name="Get SSN Count for this PFN" target="ssnSelectCountQuery">
+					<db:sql><![CDATA[SELECT COUNT(PFN_X) FROM S1AOWN.S1VSSN0  WHERE PFN_X = :sessionPFN;]]></db:sql>
+					<db:input-parameters ><![CDATA[#[{
+	"sessionPFN": vars.sessionPFN
+}]]]></db:input-parameters>
+				
+</db:select>
+				<choice doc:name="Choice">
+					<when
+						expression='#[vars.ssnSelectCountQuery[0]."1" &lt; 9]'>
+						<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+							expression. -->
+						<!-- For more information refer to: -->
+						<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+						<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+						<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+						<set-variable value='#[vars.ssnSelectCountQuery[0]."1"]' doc:name="Set sessionSSNCount" doc:id="ae06f745-9956-4210-8e45-b1ae6cfc83d0" variableName="sessionSSNCount"/>
+						<set-variable value="#[vars.sessionRecordSSN default []]" doc:name="Set sessionRecordSSN" doc:id="7e8c422b-c210-4425-83d5-4cc78c19128a" variableName="sessionRecordSSN"/>
+						<scripting:execute doc:name="Process SSN"
+							doc:id="5c55541f-67f6-46fb-a296-aabce90c527f" engine="Groovy" target="temp">
+							<scripting:code><![CDATA[if((vars.dlnssnSize=='01') && (!vars.sessionRecordSSN.contains(payload.toString().substring(15,24))))
+	vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+if(vars.dlnssnSize=='02')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+}
+if(vars.dlnssnSize=='03')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+}
+if(vars.dlnssnSize=='04')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(51,60)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(51,60));
+	}
+}
+if(vars.dlnssnSize=='05')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(51,60)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(51,60));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(63,72)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(63,72));
+	}
+}
+if(vars.dlnssnSize=='06')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(51,60)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(51,60));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(63,72)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(63,72));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(75,84)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(75,84));
+	}
+}
+if(vars.dlnssnSize=='07')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(51,60)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(51,60));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(63,72)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(63,72));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(75,84)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(75,84));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(87,96)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(87,96));
+	}
+}
+if(vars.dlnssnSize=='08')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(51,60)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(51,60));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(63,72)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(63,72));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(75,84)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(75,84));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(87,96)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(87,96));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(99,108)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(99,108));
+	}
+}
+if(vars.dlnssnSize=='09')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(51,60)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(51,60));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(63,72)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(63,72));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(75,84)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(75,84));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(87,96)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(87,96));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(99,108)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(99,108));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(111,120)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(111,120));
+	}
+}
+if(vars.dlnssnSize=='10')
+{
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(15,24)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(15,24));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(27,36)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(27,36));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(39,48)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(39,48));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(51,60)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(51,60));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(63,72)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(63,72));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(75,84)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(75,84));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(87,96)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(87,96));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(99,108)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(99,108));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(111,120)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(111,120));
+	}
+	if(!vars.sessionRecordSSN.contains(payload.toString().substring(123,132)))
+	{
+		vars.sessionRecordSSN.add(payload.toString().substring(123,132));
+	}
+}
+return vars.sessionRecordSSN;]]></scripting:code>
+						</scripting:execute>
+						<set-variable value="#[vars.temp]" doc:name="Set sessionRecordSSN" doc:id="c397344c-6e8b-4176-b9d2-0b5e4d50b77c" variableName="sessionRecordSSN"/>
+						<flow-ref name="process_SSN_Sub_Flow"
+							doc:name="process_SSN_Sub_Flow" />
+					
+</when>
+					<when
+						expression='#[vars.ssnSelectCountQuery[0]."1" &gt;= 9]'>
+						<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+							expression. -->
+						<!-- For more information refer to: -->
+						<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+						<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+						<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+						<ee:transform doc:name="Set for FUA Insert - 709"
+							doc:id="9815954c-e1e9-47ca-bbd3-5c3b5f623bfb">
+							<ee:message>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.sessionPFN]]></ee:set-variable>
+								<ee:set-variable variableName="sessionKeyName"><![CDATA['SOC_SEC_NUM']]></ee:set-variable>
+								<ee:set-variable
+									variableName="sessionCRIMSValue"><![CDATA[' ']]></ee:set-variable>
+								<ee:set-variable
+									variableName="sessionErrorNumber"><![CDATA[709]]></ee:set-variable>
+								<ee:set-variable variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+								<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.ssnSelectCountQuery[0]."1"]]></ee:set-variable>
+							
+</ee:variables>
+						</ee:transform>
+						<flow-ref name="insertFUAData" doc:name="Insert FUA Data" />
+					</when>
+					<otherwise>
+						<logger level="INFO" doc:name="Logger" />
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger"
+					message="Invalid Record C" />
+			</otherwise>
+		</choice>
+	</sub-flow>
+	<sub-flow name="process_DLN_Sub_Flow">
+		<logger message="Going for DLN Process" level="INFO"
+			doc:name="Logger" />
+		<ee:transform doc:name="Transform Message"
+			doc:id="b6054fda-e8c4-49a8-91f9-ec3601b9839b">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="dlnCount"><![CDATA[sizeOf(vars.sessionRecordDLN)]]></ee:set-variable>
+				<ee:set-variable variableName="dlNumber"><![CDATA['']]></ee:set-variable>
+				<ee:set-variable variableName="dlState"><![CDATA['']]></ee:set-variable>
+				<ee:set-variable variableName="dlCurrentFlag"><![CDATA['']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<foreach collection="#[vars.sessionRecordDLN]"
+			doc:name="For Each" counterVariableName="dlncounter1">
+			<logger
+				message="#[vars.sessionRecordDLN[(vars.dlncounter1 - 1)]]"
+				level="INFO" doc:name="Logger">
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+			</logger>
+			<choice doc:name="Choice">
+				<when
+					expression="#[sizeOf(vars.sessionRecordDLN) &gt;= vars.dlncounter1]">
+					<ee:transform doc:name="Transform Message" doc:id="78632a2b-3a27-4c0a-8e80-25b82d44071f">
+						<ee:variables>
+							<ee:set-variable variableName="dlNumber" ><![CDATA[vars.sessionRecordDLN[(vars.dlncounter1 - 1)]]]></ee:set-variable> 
+								<ee:set-variable variableName="dlState" ><![CDATA[vars.sessionRecordDLNState[(vars.dlncounter1 - 1)]]]></ee:set-variable> 
+								<ee:set-variable variableName="sessionUpdateDLNCurrentFlag" ><![CDATA[if(vars.sessionDLNCount < 1)
+	'Y'
+else
+	'N']]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<db:select config-ref="DB2_Config_OTS"
+						doc:name="Get DLN Count for this PFN and DLN "
+						target="dlnSelectQuery2">
+						<db:sql><![CDATA[SELECT COUNT(PFN_X) FROM S1AOWN.S1VDLN0  WHERE PFN_X = :sessionPFN AND DRIVER_LIC_NUM = :dlNumber;]]></db:sql>
+						<db:input-parameters ><![CDATA[#[{
+	"dlNumber": vars.dlNumber,
+	"sessionPFN": vars.sessionPFN
+}]]]></db:input-parameters>
+					
+</db:select>
+					<choice doc:name="Choice">
+						<when
+							expression='#[vars.dlnSelectQuery2[0]."1" &lt; 1]'>
+							<!--Migration WARN: The MEL expression could not be migrated to a 
+								DataWeave expression. -->
+							<!-- For more information refer to: -->
+							<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+							<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+							<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+							<db:select config-ref="DB2_Config_OTS"
+								doc:name="Get Other PFN from DLN for this DLN "
+								target="dlnSelectQuery3">
+								<db:sql><![CDATA[SELECT PFN_X FROM S1AOWN.S1VDLN0  WHERE DRIVER_LIC_NUM = :dlNumber AND PFN_X <> :sessionPFN;]]></db:sql>
+								<db:input-parameters ><![CDATA[#[{
+	"dlNumber": vars.dlNumber,
+	"sessionPFN": vars.sessionPFN
+}]]]></db:input-parameters>
+							
+</db:select>
+							<choice doc:name="Choice">
+								<when expression="#[sizeOf(vars.dlnSelectQuery3) &gt; 0]">
+									<ee:transform doc:name="Set for FUA Insert - 707"
+										doc:id="f3015290-b7e5-4bae-9654-942fd6d16aa4">
+										<ee:message>
+										</ee:message>
+										<ee:variables>
+											<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.sessionPFN
+]]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionKeyName"><![CDATA['DRIVER_LIC_NUM'
+]]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionKeyValue"><![CDATA[vars.dlNumber
+]]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionErrorNumber"><![CDATA[707
+]]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+											<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA[vars.flowdlnSelectQuery3[0].'PFN_X']]></ee:set-variable>
+										
+</ee:variables>
+									</ee:transform>
+									<flow-ref name="insertFUAData"
+										doc:name="Insert into FUA" />
+								</when>
+								<otherwise>
+									<logger message="Process DLN Records" level="INFO"
+										doc:name="Logger" />
+									<choice doc:name="Choice">
+										<when
+											expression="#[sizeOf(vars.sessionUpdateDLN) &lt; (9 - vars.sessionDLNCount)]">
+											<ee:transform doc:name="Transform Message"
+												doc:id="8b0a46d2-d9c6-410f-9c40-c30d31ca8633">
+												<ee:message>
+												</ee:message>
+												<ee:variables>
+													<ee:set-variable variableName="sessionUpdateDLN" ><![CDATA[vars.sessionUpdateDLN + vars.dlNumber]]></ee:set-variable> 
+													<ee:set-variable variableName="sessionUpdateDLNState" ><![CDATA[vars.sessionUpdateDLNState + vars.dlState]]></ee:set-variable>
+												</ee:variables>
+											</ee:transform>
+										</when>
+										<otherwise>
+											<logger level="INFO" doc:name="Logger" />
+										</otherwise>
+									</choice>
+								</otherwise>
+							</choice>
+						</when>
+						<otherwise>
+							<logger message="DLN Already exists for this PFN"
+								level="INFO" doc:name="Logger" />
+							<ee:transform doc:name="Set for FUA Insert - 708"
+								doc:id="59b30166-5c6c-42d8-8737-fe1c0f1f32d3">
+								<ee:message>
+								</ee:message>
+								<ee:variables>
+									<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.sessionPFN]]></ee:set-variable>
+									<ee:set-variable variableName="sessionKeyName"><![CDATA['DRIVER_LIC_NUM']]></ee:set-variable>
+									<ee:set-variable variableName="sessionKeyValue"><![CDATA[vars.dlNumber]]></ee:set-variable>
+									<ee:set-variable
+										variableName="sessionCRIMSValue"><![CDATA[' ']]></ee:set-variable>
+									<ee:set-variable
+										variableName="sessionErrorNumber"><![CDATA[708]]></ee:set-variable>
+									<ee:set-variable variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+							<flow-ref name="insertFUAData"
+								doc:name="Insert into FUA" />
+						</otherwise>
+					</choice>
+				
+</when>
+				<otherwise>
+					<logger level="INFO" doc:name="Logger" />
+				</otherwise>
+			</choice>
+		</foreach>
+	</sub-flow>
+	<sub-flow name="process_SSN_Sub_Flow">
+		<logger message="Going for SSN Process" level="INFO"
+			doc:name="Logger" />
+		<ee:transform doc:name="Transform Message"
+			doc:id="05b94f05-36e0-4403-8277-be49569d1f77">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="ssnCount"><![CDATA[sizeOf(vars.sessionRecordSSN)]]></ee:set-variable>
+				<ee:set-variable variableName="ssNumber"><![CDATA['']]></ee:set-variable>
+				<ee:set-variable variableName="ssnCurrentFlag"><![CDATA['']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<foreach collection="#[vars.sessionRecordSSN]"
+			doc:name="For Each" counterVariableName="ssncounter1">
+			<logger
+				message="#[vars.sessionRecordSSN[(vars.ssncounter1 - 1)]]" level="INFO"
+				doc:name="Logger">
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+			</logger>
+			<choice doc:name="Choice">
+				<when
+					expression="#[sizeOf(vars.sessionRecordSSN) &gt;= vars.ssncounter1]">
+					<ee:transform doc:name="Transform Message"
+						doc:id="9975315b-09a0-44b0-9f9d-9fe981230b38">
+						<ee:message>
+						</ee:message>
+						<ee:variables>
+							<ee:set-variable
+								variableName="sessionUpdateSSNCurrentFlag"><![CDATA[if(vars.sessionSSNCount < 1)
+   'Y'
+else
+   'N']]></ee:set-variable>
+							<ee:set-variable variableName="ssNumber"><![CDATA[vars.sessionRecordSSN[((vars.ssncounter1) - 1)]]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<db:select config-ref="DB2_Config_OTS"
+						doc:name="Get SSN Count for this PFN and SSN "
+						target="ssnSelectQuery2">
+						<db:sql><![CDATA[SELECT COUNT(PFN_X) FROM S1AOWN.S1VSSN0  WHERE PFN_X = :sessionPFN AND SOC_SEC_NUM = :ssNumber;]]></db:sql>
+						<db:input-parameters ><![CDATA[#[{
+	"sessionPFN": vars.sessionPFN,
+	"ssNumber": vars.ssNumber
+}]]]></db:input-parameters>
+					
+</db:select>
+					<choice doc:name="Choice">
+						<when
+							expression='#[vars.ssnSelectQuery2[0]."1" &lt; 1]'>
+							<!--Migration WARN: The MEL expression could not be migrated to a 
+								DataWeave expression. -->
+							<!-- For more information refer to: -->
+							<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+							<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+							<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+							<db:select config-ref="DB2_Config_OTS"
+								doc:name="Get Other PFN from SSN for this SSN"
+								target="ssnSelectQuery3">
+								<db:sql><![CDATA[SELECT PFN_X FROM S1AOWN.S1VSSN0  WHERE SOC_SEC_NUM = :ssNumber AND PFN_X <> :sessionPFN;]]></db:sql>
+								<db:input-parameters ><![CDATA[#[{
+	"ssNumber": vars.ssNumber,
+	"sessionPFN": vars.sessionPFN
+}]]]></db:input-parameters>
+							
+</db:select>
+							<choice doc:name="Choice">
+								<when expression="#[sizeOf(vars.ssnSelectQuery3) &gt; 0]">
+									<ee:transform doc:name="Set for FUA Insert - 710"
+										doc:id="a4f5f47b-d417-410f-b09d-c08dd99ce1ae">
+										<ee:message>
+										</ee:message>
+										<ee:variables>
+											<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.sessionPFN]]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionKeyName"><![CDATA['SOC_SEC_NUM']]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionKeyValue"><![CDATA[vars.ssNumber]]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionCRIMSValue"><![CDATA[vars.ssnSelectQuery3[0].'PFN_X']]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionErrorNumber"><![CDATA[710]]></ee:set-variable>
+											<ee:set-variable
+												variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+									<flow-ref name="insertFUAData"
+										doc:name="Insert into FUA" />
+								</when>
+								<otherwise>
+									<logger message="Process SSN Records" level="INFO"
+										doc:name="Logger" />
+									<choice doc:name="Choice">
+										<when
+											expression="#[sizeOf(vars.sessionUpdateSSN) &lt; (9 - vars.sessionSSNCount)]">
+											<ee:transform doc:name="Add SSN"
+												doc:id="51c2e051-aca2-434a-9528-046ab99b3f43">
+												<ee:message>
+												</ee:message>
+												<ee:variables >
+													<ee:set-variable variableName="sessionUpdateSSN" ><![CDATA[vars.sessionUpdateSSN + vars.ssNumber
+]]></ee:set-variable>
+												</ee:variables>
+											
+</ee:transform>
+										</when>
+										<otherwise>
+											<logger level="INFO" doc:name="Logger" />
+										</otherwise>
+									</choice>
+								</otherwise>
+							</choice>
+						</when>
+						<otherwise>
+							<logger message="SSN Already exists for this PFN"
+								level="INFO" doc:name="Logger" />
+							<ee:transform doc:name="Set for FUA Insert - 711"
+								doc:id="5d6bbd96-ff9e-4d8c-8fd9-efe854300f81">
+								<ee:message>
+								</ee:message>
+								<ee:variables>
+									<ee:set-variable variableName="sessionKeyPFN"><![CDATA[vars.sessionPFN]]></ee:set-variable>
+									<ee:set-variable variableName="sessionKeyName"><![CDATA['SOC_SEC_NUM']]></ee:set-variable>
+									<ee:set-variable variableName="sessionKeyValue"><![CDATA[vars.ssNumber]]></ee:set-variable>
+									<ee:set-variable
+										variableName="sessionCRIMSValue"><![CDATA[' ']]></ee:set-variable>
+									<ee:set-variable
+										variableName="sessionErrorNumber"><![CDATA[711]]></ee:set-variable>
+									<ee:set-variable variableName="sessionUpdateID"><![CDATA['FUAAUPDATE']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+							<flow-ref name="insertFUAData"
+								doc:name="Insert into FUA" />
+						</otherwise>
+					</choice>
+				</when>
+				<otherwise>
+					<logger level="INFO" doc:name="Logger" />
+				</otherwise>
+			</choice>
+		</foreach>
+	</sub-flow>
+	<sub-flow name="process_AKA_Sub_Flow"
+		doc:id="80787b27-be17-4450-9e13-853aca78c2f2">
+		<logger
+			message='#["In processAKA-Sub-Flow -1: $(vars.sessionPFN)"]'
+			level="INFO" doc:name="Logger" />
+		<ee:transform doc:name="Transform Message"
+			doc:id="88d83779-b316-49de-8fd2-078e8a7bc09f">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="akaCount"><![CDATA[sizeOf(vars.sessionRecordAKA)]]></ee:set-variable>
+				<ee:set-variable variableName="akaLastName"><![CDATA['']]></ee:set-variable>
+				<ee:set-variable variableName="akaFirstName"><![CDATA['']]></ee:set-variable>
+				<ee:set-variable variableName="akaMiddleName"><![CDATA['']]></ee:set-variable>
+				<ee:set-variable variableName="akaGeneration"><![CDATA['']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<foreach collection="#[vars.sessionRecordAKA]"
+			doc:name="For Each" counterVariableName="counter1">
+			<set-payload doc:name="Split String"
+				value='#[vars.sessionRecordAKA[vars.counter1 - 1] splitBy(",")]'>
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+			</set-payload>
+			<foreach doc:name="For Each" collection="#[payload]"
+				counterVariableName="counter2">
+				<choice doc:name="Choice">
+					<when expression="#[vars.counter2 == 1]">
+						<ee:transform doc:name="Transform Message"
+							doc:id="0bf85068-38f1-48c5-a9f2-3c415bc453e3">
+							<ee:message>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="akaLastName"><![CDATA[%dw 2.0
+import substring from dw::core::Strings
+output application/java
+---
+if(sizeOf(payload) <= 16)
+  payload
+else
+  substring(payload,0,16)]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+					</when>
+					<when expression="#[vars.counter2 == 2]">
+						<set-payload doc:name="Split String"
+							value='#[payload splitBy(" ")]'>
+							<!--Migration WARN: The MEL expression could not be migrated to a 
+								DataWeave expression. -->
+							<!-- For more information refer to: -->
+							<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+							<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+							<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+							<!--Migration WARN: The MEL expression contains a method invocation 
+								that could not be migrated to a Dataweave expression. -->
+							<!-- For more information refer to: -->
+							<!-- * https://docs.mulesoft.com/mule-runtime/4.3/dataweave-cookbook-java-methods -->
+							<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+						</set-payload>
+						<foreach collection="#[payload]"
+							counterVariableName="counter3" doc:name="For Each">
+							<choice doc:name="Choice">
+								<when expression="#[vars.counter3 == 1]">
+									<ee:transform doc:name="Transform Message"
+										doc:id="b977b2a9-3241-40d6-a1a7-bc5d3fd6f0f3">
+										<ee:message>
+										</ee:message>
+										<ee:variables>
+											<ee:set-variable variableName="akaFirstName"><![CDATA[%dw 2.0
+import substring from dw::core::Strings
+output application/java
+---
+if(sizeOf(payload) <= 12)
+  trim(payload)
+else
+  trim(substring(payload,0,12))]]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+								</when>
+								<when expression="#[vars.counter3 == 2]">
+									<ee:transform doc:name="Transform Message"
+										doc:id="8dd4a8bb-4148-43a1-bee8-45a7058b69f6">
+										<ee:message>
+										</ee:message>
+										<ee:variables>
+											<ee:set-variable variableName="akaMiddleName"><![CDATA[%dw 2.0
+import substring from dw::core::Strings
+output application/java
+---
+if(sizeOf(payload) <= 12)
+  (payload)
+else
+  (substring(payload,0,12))]]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+								</when>
+								<when expression="#[vars.counter3 == 3]">
+									<ee:transform doc:name="Transform Message"
+										doc:id="7caa9edb-6ebe-4510-8969-23bf23483917">
+										<ee:message>
+										</ee:message>
+										<ee:variables>
+											<ee:set-variable variableName="akaGeneration"><![CDATA[%dw 2.0
+import substring from dw::core::Strings
+output application/java
+---
+if(sizeOf(payload) <= 2)
+  (payload)
+else
+  (substring(payload,0,2))]]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+								</when>
+								<otherwise>
+									<logger level="INFO" doc:name="Logger" />
+								</otherwise>
+							</choice>
+						</foreach>
+					</when>
+					<otherwise>
+						<logger level="INFO" doc:name="Logger" />
+					</otherwise>
+				</choice>
+			</foreach>
+			<ee:transform doc:name="Add NamesExpression" doc:id="c7c07d3a-fcd8-4a47-949b-f465a4e52bef" >
+				<ee:message >
+				</ee:message>
+				<ee:variables >
+					<ee:set-variable variableName="akaValidFlag" ><![CDATA[%dw 2.0
+output application/java
+---
+if((vars.akaLastName matches(/[a-zA-Z]+/)) and (vars.akaFirstName matches(/[a-zA-Z]+/)) and ((vars.akaLastName matches(/[a-zA-Z]+/)) or (isEmpty(vars.akaMiddleName))))
+	'Y'
+else
+	'N'
+
+ ]]></ee:set-variable>
+					<ee:set-variable variableName="akaGeneration" ><![CDATA[%dw 2.0
+output application/java
+var temp = if((vars.akaGeneration == '') and (vars.akaMiddleName > ' ') and (vars.akaMiddleName == 'JR' or vars.akaMiddleName == 'SR' or vars.akaMiddleName == '1' or vars.akaMiddleName == '2' or vars.akaMiddleName == '3' or vars.akaMiddleName == '4' or vars.akaMiddleName == '5' or vars.akaMiddleName == '6' or vars.akaMiddleName == '7' or vars.akaMiddleName == '8' or vars.akaMiddleName == '9' or vars.akaMiddleName == '10') )
+	vars.akaMiddleName
+else
+	vars.akaGeneration
+---
+if(sizeOf(temp) > 2)
+	temp[0 to 2]
+else
+	temp]]></ee:set-variable>
+					<ee:set-variable variableName="akaMiddleName" ><![CDATA[if((vars.akaGeneration == '') and (vars.akaMiddleName > ' ') and (vars.akaMiddleName == 'JR' or vars.akaMiddleName == 'SR' or vars.akaMiddleName == '1' or vars.akaMiddleName == '2' or vars.akaMiddleName == '3' or vars.akaMiddleName == '4' or vars.akaMiddleName == '5' or vars.akaMiddleName == '6' or vars.akaMiddleName == '7' or vars.akaMiddleName == '8' or vars.akaMiddleName == '9' or vars.akaMiddleName == '10') )
+	''
+else
+	vars.akaMiddleName]]></ee:set-variable>
+				
+</ee:variables>
+			</ee:transform>
+			<choice doc:name="Choice">
+				<when expression="#[vars.akaValidFlag == 'Y']">
+					<db:select config-ref="DB2_Config_OTS" doc:name="Get Name Count from NAM" target="namSelectQuery">
+						<db:sql><![CDATA[SELECT COUNT(PFN_X) FROM S1AOWN.S1VNAM0  WHERE PFN_X = :sessionPFN AND DEFN_LAST_NAME = :akaLastName AND DEFN_FIRST_NAME = :akaFirstName AND DEFN_MIDDLE_NAME = :akaMiddleName AND DEFN_GENERATION = :akaGeneration;]]></db:sql>
+						<db:input-parameters ><![CDATA[#[{
+	"sessionPFN": vars.sessionPFN,
+	"akaLastName": vars.akaLastName,
+	"akaFirstName": vars.akaFirstName,
+	"akaMiddleName": vars.akaMiddleName,
+	"akaGeneration": vars.akaGeneration
+	
+}]]]></db:input-parameters>
+					
+</db:select>
+					<logger
+						message="#[&quot;Name Count: $(vars.namSelectQuery[0].'1')&quot;]"
+						level="INFO" doc:name="Logger">
+						<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+							expression. -->
+						<!-- For more information refer to: -->
+						<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+						<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+						<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+					</logger>
+					<choice doc:name="Choice">
+						<when
+							expression='#[vars.namSelectQuery[0]."1" &lt; 1]'>
+							<!--Migration WARN: The MEL expression could not be migrated to a 
+								DataWeave expression. -->
+							<!-- For more information refer to: -->
+							<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+							<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+							<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+							<ee:transform doc:name="Expression 1" doc:id="9a8bb2cc-2dd1-4a46-b5c7-aa8c14f2f94c" >
+								<ee:variables>
+									<ee:set-variable variableName="vars.sessionUpdateAKA" ><![CDATA[%dw 2.0
+output application/java
+---
+if(!(vars.sessionUpdateAKA contains((vars.akaLastName ++ vars.akaFirstName ++ vars.akaMiddleName ++ vars.akaGeneration))))
+    vars.sessionUpdateAKA + (vars.akaLastName + vars.akaFirstName + vars.akaMiddleName + vars.akaGeneration)
+else
+    vars.sessionUpdateAKA]]></ee:set-variable> 
+									<ee:set-variable variableName="vars.sessionRecordAKALastName" ><![CDATA[%dw 2.0
+output application/json
+---
+if(!(vars.sessionUpdateAKA contains((vars.akaLastName ++ vars.akaFirstName ++ vars.akaMiddleName ++ vars.akaGeneration))))
+    vars.sessionRecordAKALastName + (vars.akaLastName)
+else
+    vars.sessionRecordAKALastName]]></ee:set-variable> 
+									<ee:set-variable variableName="vars.sessionRecordAKAFirstName" ><![CDATA[%dw 2.0
+output application/java
+---
+if(!(vars.sessionUpdateAKA contains((vars.akaLastName ++ vars.akaFirstName ++ vars.akaMiddleName ++ vars.akaGeneration))))
+    vars.sessionRecordAKAFirstName + (vars.akaFirstName)
+else
+    vars.sessionRecordAKAFirstName]]></ee:set-variable> 
+									<ee:set-variable variableName="vars.sessionRecordAKAMiddleName" ><![CDATA[%dw 2.0
+output application/java
+---
+if(!(vars.sessionUpdateAKA contains((vars.akaLastName ++ vars.akaFirstName ++ vars.akaMiddleName ++ vars.akaGeneration))))
+    vars.sessionRecordAKAMiddleName + (vars.akaMiddleName)
+else
+    vars.sessionRecordAKAMiddleName]]></ee:set-variable> 
+									<ee:set-variable variableName="vars.sessionRecordAKAGeneration" ><![CDATA[%dw 2.0
+output application/java
+---
+if(!(vars.sessionUpdateAKA contains((vars.akaLastName ++ vars.akaFirstName ++ vars.akaMiddleName ++ vars.akaGeneration))))
+    vars.sessionRecordAKAGeneration + (vars.akaGeneration)
+else
+    vars.sessionRecordAKAGeneration]]></ee:set-variable> 
+									<ee:set-variable variableName="vars.akaLastName" ><![CDATA['']]></ee:set-variable> 
+									<ee:set-variable variableName="vars.akaFirstName" ><![CDATA['']]></ee:set-variable> 
+									<ee:set-variable variableName="vars.akaMiddleName" ><![CDATA['']]></ee:set-variable> 
+									<ee:set-variable variableName="vars.akaGeneration" ><![CDATA['']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+						
+</when>
+						<otherwise>
+							<ee:transform doc:name="Expression2" doc:id="e7d84712-5654-437a-ac08-60fe7531112a" >
+								<ee:message >
+								</ee:message>
+								<ee:variables >
+									<ee:set-variable variableName="akaLastName" ><![CDATA['']]></ee:set-variable> 
+									<ee:set-variable variableName="akaFirstName" ><![CDATA['']]></ee:set-variable> 
+									<ee:set-variable variableName="akaMiddleName" ><![CDATA['']]></ee:set-variable> 
+									<ee:set-variable variableName="akaGeneration" ><![CDATA['']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+						
+</otherwise>
+					</choice>
+				</when>
+				<otherwise>
+					<logger message="Invalid AKA" level="INFO"
+						doc:name="Invalid AKA" />
+					<ee:transform doc:name="Set up for FUA Insert" doc:id="c0033a93-9de4-438d-a638-a5030e19997e" >
+						<ee:message >
+						</ee:message>
+						<ee:variables >
+							<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionPFN]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyName" ><![CDATA['AKA']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.sessionRecordAKA[(vars.counter1 - 1)]]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[730]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<flow-ref name="insertFUAData"
+						doc:name="insertFUAData - 730" />
+					<ee:transform doc:name="Initialize AKA Info" doc:id="1833ee76-1f39-4426-a4ec-892603a2a204" >
+						<ee:message >
+						</ee:message>
+						<ee:variables >
+							<ee:set-variable variableName="akaLastName" ><![CDATA['']]></ee:set-variable> 
+							<ee:set-variable variableName="akaFirstName" ><![CDATA['']]></ee:set-variable> 
+							<ee:set-variable variableName="akaMiddleName" ><![CDATA['']]></ee:set-variable> 
+							<ee:set-variable variableName="akaGeneration" ><![CDATA['']]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+				
+</otherwise>
+			</choice>
+		</foreach>
+		<ee:transform doc:name="Update AKA Process Flag" doc:id="36531b98-5338-45d7-8a85-44cb7bcfbf9c" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="sessionRecordBProcessFlag" ><![CDATA['N']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	
+</sub-flow>
+<sub-flow name="updatePerson" doc:id="bfc973fa-30ef-477a-8a00-8495f5e54a21">
+		<logger level="INFO" doc:name="Logger"
+			message='#["FBI" ++ (vars.sessionUpdateFBINum default "") ++ "CII" ++ (vars.sessionUpdateCIINum default "")]' />
+		<choice doc:name="Choice">
+			<when
+				expression="#[vars.sessionUpdateCIINum &gt; ' ' and vars.sessionUpdateFBINum &gt; ' ']">
+				<ee:transform doc:name="Transform Message" doc:id="f8ac3a79-68d2-4adf-a058-a237b27f1c6e" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "pfn": "' ++ vars.sessionUpdatePFN ++ '"' ++ vars.sessionUpdateCIINum ++ '"' ++ ',"fbiNumber": "' ++ vars.sessionUpdateFBINum ++ '"']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<when
+				expression="#[vars.sessionUpdateCIINum &gt; ' ' and vars.sessionUpdateFBINum == '']">
+				<ee:transform doc:name="Transform Message" doc:id="5061f12c-f8b8-476a-81bc-40de3985e71d" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "pfn": "' ++ vars.sessionUpdatePFN ++ '"' ++ ',"ciiNumber": "' ++ vars.sessionUpdateCIINum ++ '"']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<when
+				expression="#[vars.sessionUpdateFBINum &gt; ' ' and vars.sessionUpdateCIINum == '']">
+				<ee:transform doc:name="Transform Message" doc:id="6915df75-c1bf-4d0e-b433-377ac77f6ec1" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "pfn": "' ++ vars.sessionUpdatePFN ++ '"' ++ ',"fbiNumber": "' ++ vars.sessionUpdateFBINum ++ '"']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<when
+				expression="#[vars.sessionUpdateCIINum == '' and vars.sessionUpdateFBINum == '']">
+				<ee:transform doc:name="Transform Message" doc:id="7046f2ca-2f3f-4f81-9276-83f856e7743a" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "pfn": "' ++ vars.sessionUpdatePFN ++ '"']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<logger message="#[vars.sessionRecordUpdateData]"
+			level="INFO" doc:name="Logger" />
+		<choice doc:name="Choice">
+			<when
+				expression='#[sizeOf(vars.sessionRecordAKALastName default "") &gt; 0]'>
+				<ee:transform doc:name="Transform Message" doc:id="82851acc-b9e6-4ce5-a0bb-026839d808fd">
+					<ee:message>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ ',"akas": [']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<foreach
+					collection="#[vars.sessionRecordAKALastName]"
+					counterVariableName="akaCounter" doc:name="For Each AKA">
+					<logger
+						message="#[vars.sessionRecordAKALastName[(vars.akaCounter - 1)]]"
+						level="INFO" doc:name="Logger">
+						<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+							expression. -->
+						<!-- For more information refer to: -->
+						<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+						<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+						<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+					</logger>
+					<choice doc:name="Choice1">
+						<when
+							expression='#[sizeOf(vars.sessionRecordAKALastName default "") &gt; vars.akaCounter]'>
+							<ee:transform doc:name="Transform Message" doc:id="6616b03c-c48a-4b29-b352-7c5ce7bb5f1b" >
+								<ee:message >
+								</ee:message>
+								<ee:variables >
+									<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "lastName": "' ++ vars.sessionRecordAKALastName[(vars.akaCounter - 1)] ++ '"' ++ ',"firstName": "' ++ vars.sessionRecordAKAFirstName[(vars.akaCounter - 1)] ++ '"' ++ ',"middleName": "' ++ vars.sessionRecordAKAMiddleName[(vars.akaCounter - 1)] ++ '"' ++ ',"generation": "' ++ vars.sessionRecordAKAGeneration[(vars.akaCounter - 1)] ++ '"},']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+						</when>
+						<when
+							expression='#[sizeOf(vars.sessionRecordAKALastName default "") == vars.akaCounter]'>
+							<ee:transform doc:name="Transform Message" doc:id="7f8324ab-e0da-44f4-b7ed-95457aea426d">
+					<ee:message>
+					</ee:message>
+								<ee:variables >
+									<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "lastName": "' ++ vars.sessionRecordAKALastName[(vars.akaCounter - 1)] ++ '"' ++ ',"firstName": "' ++ (vars.sessionRecordAKAFirstName[(vars.akaCounter - 1)] default "JONAS") ++ '"' ++ ',"middleName": "' ++ (vars.sessionRecordAKAMiddleName[(vars.akaCounter - 1)] default "MICHEAL") ++ '"' ++ ',"generation": "' ++ (vars.sessionRecordAKAGeneration[(vars.akaCounter - 1)] default "FIRST") ++ '"}' //remove the defaults added for testing purpose]]></ee:set-variable>
+								</ee:variables>
+				</ee:transform>
+						</when>
+						<otherwise>
+							<logger level="INFO" doc:name="Logger" />
+						</otherwise>
+					</choice>
+				</foreach>
+				<ee:transform doc:name="Transform Message" doc:id="1413b4ca-d84f-4313-a5b3-deecb434ff04" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ ']']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<choice doc:name="Choice">
+			<when
+				expression="#[sizeOf(vars.sessionUpdateDLN) &gt; 0]">
+				<ee:transform doc:name="Transform Message" doc:id="c16e0c53-b0b0-4419-9d5b-ed13472704e0">
+						<ee:message>
+						</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ ',"dlns": [']]></ee:set-variable>
+					</ee:variables>
+					</ee:transform>
+				<foreach collection="#[vars.sessionUpdateDLN]"
+					counterVariableName="counter5" doc:name="For Each DLN">
+					<logger level="INFO" doc:name="Logger" />
+					<choice doc:name="Choice">
+						<when
+							expression="#[sizeOf(vars.sessionUpdateDLN) &gt; vars.counter5]">
+							<ee:transform doc:name="Transform Message" doc:id="6244f123-49b8-4cc3-9ebe-ead1a3e4838e">
+					<ee:message>
+					</ee:message>
+								<ee:variables >
+									<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[%dw 2.0
+output application/java
+var temp = (vars.sessionRecordUpdateData) ++ '{ "number": "' ++ vars.sessionUpdateDLN[(vars.counter5 - 1)] ++ '"' ++ ',"state": "' ++ vars.sessionUpdateDLNState[(vars.counter5 - 1)] ++ '"' ++ ',"currentFlag": "'
+---
+if (vars.counter5 == 1)
+	(temp) ++ (vars.sessionUpdateDLNCurrentFlag) ++ '"},'
+else
+  temp ++ 'N' ++ '"},'
+]]></ee:set-variable>
+									<ee:set-variable variableName="sessionUpdateDLNCurrentFlag" ><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.counter5 == 1)
+	'N'
+else
+	vars.sessionUpdateDLNCurrentFlag]]></ee:set-variable>
+								</ee:variables>
+				</ee:transform>
+						</when>
+						<when
+							expression="#[sizeOf(vars.sessionUpdateDLN) == vars.counter5]">
+							<ee:transform doc:name="Transform Message" doc:id="75bcec14-0cc2-4308-9a94-cadfb1bb3c69" >
+								<ee:message >
+								</ee:message>
+								<ee:variables >
+									<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "number": "' ++ vars.sessionUpdateDLN[vars.counter5 - 1] ++ '","state": "' ++ vars.sessionUpdateDLNState[vars.counter5 - 1] ++ '","currentFlag": "' ++ vars.sessionUpdateDLNCurrentFlag ++ '"}']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+						</when>
+						<otherwise>
+							<logger level="INFO" doc:name="Logger" />
+						</otherwise>
+					</choice>
+				</foreach>
+				<ee:transform doc:name="Transform Message" doc:id="62e4a44f-8049-400a-b6b7-b69cbafde031" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ ']']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<choice doc:name="Check for SSN Updates">
+			<when
+				expression="#[sizeOf(vars.sessionUpdateSSN) &gt; 0]">
+				<ee:transform doc:name="Transform Message" doc:id="aa975513-cadc-4e87-bef7-fae594064bda">
+						<ee:message>
+						</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ ',"ssns": [']]></ee:set-variable>
+					</ee:variables>
+					</ee:transform>
+				<foreach collection="#[vars.sessionUpdateSSN]"
+					counterVariableName="counter6" doc:name="For Each">
+					<logger level="INFO" doc:name="Logger" />
+					<choice doc:name="Choice">
+						<when
+							expression="#[sizeOf(vars.sessionUpdateSSN) &gt; vars.counter6]">
+							<ee:transform doc:name="Transform Message" doc:id="a71d6792-c1d1-4870-8cb2-1954a0655538" >
+								<ee:message >
+								</ee:message>
+								<ee:variables >
+									<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[%dw 2.0
+output application/java
+var temp = vars.sessionRecordUpdateData ++ '{ "number": "' ++ vars.sessionUpdateSSN[(vars.counter6 - 1)] ++ '","currentFlag": "'
+---
+if (counter6 == 1)
+ (temp ++ vars.sessionUpdateSSNCurrentFlag) ++ '"},'
+else
+  (temp ++ vars.sessionRecordUpdateData ++ 'N') ++ '"},']]></ee:set-variable>
+									<ee:set-variable variableName="sessionUpdateSSNCurrentFlag" ><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.counter6 == 1)
+	'N'
+else
+	vars.sessionUpdateSSNCurrentFlag
+]]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+						</when>
+						<when
+							expression="#[sizeOf(vars.sessionUpdateSSN) == vars.counter6]">
+							<ee:transform doc:name="Transform Message" doc:id="fa0c2647-2e68-4a67-9945-47598edcc38a" >
+								<ee:message >
+								</ee:message>
+								<ee:variables >
+									<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '{ "number": "' ++ vars.sessionUpdateSSN[(vars.counter6 - 1)] ++ '","currentFlag": "' ++ vars.sessionUpdateSSNCurrentFlag ++ '"}']]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+						</when>
+						<otherwise>
+							<logger level="INFO" doc:name="Logger" />
+						</otherwise>
+					</choice>
+				</foreach>
+				<ee:transform doc:name="Transform Message" doc:id="47c2c0fd-84fc-4193-a63d-1f2bb7faa87f" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ ']']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<ee:transform doc:name="Transform Message" doc:id="d3ff0a22-40cb-47d8-bd37-fc9f2b6c05b4" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA[vars.sessionRecordUpdateData ++ '}']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<logger message="Calling Web Service to get Token" level="INFO"
+			doc:name="Logger" />
+		<choice doc:name="Choice">
+			<when
+				expression="#[vars.sessionTokenAvailableFlag == 'N']">
+				<flow-ref name="getToken" doc:name="getToken" />
+				<ee:transform doc:name="Transform Message" doc:id="56a3b577-854a-4ad1-a1e1-e66f729a879a" >
+					<ee:message >
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="sessionTokenAvailableFlag" ><![CDATA['Y']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<logger
+			message='#["Calling Web Service with: $(vars.sessionRecordUpdateData)"]'
+			level="INFO" doc:name="Display Before Person Update" />
+		<flow-ref name="personUpdate" doc:name="personUpdate" />
+		<logger
+			message='#["Web Service call Status: $(vars.updateStatus)"]'
+			level="INFO" doc:name="Display after Person Update" />
+		<choice doc:name="Choice">
+			<when expression="#[vars.updateStatus == 'success']">
+				<flow-ref name="processUpdatedData"
+					doc:name="Process Updated Data" />
+			</when>
+			<otherwise>
+				<logger message="Error in Person Update" level="INFO"
+					doc:name="Logger" />
+				<ee:transform doc:name="Transform Message" doc:id="1d2f649f-d2c0-48da-9142-9dacbcde78fc">
+					
+					<ee:variables >
+						<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionUpdatePFN]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyName" ><![CDATA['PFN_X']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.sessionUpdatePFN]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[720]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+			</otherwise>
+		</choice>
+		<ee:transform doc:name="Transform Message" doc:id="1485eaa4-fece-4d35-afd1-a3b869068a33" >
+			<ee:variables>
+				<ee:set-variable variableName="sessionRecordUpdateData" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionUpdateCIINum" ><![CDATA['']]></ee:set-variable> 
+				<ee:set-variable variableName="sessionUpdateFBINum" ><![CDATA['']]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<remove-variable doc:name="sessionRecordAKA" doc:id="c5df1335-b5f4-4b08-b1b6-e39b750c6e74" variableName="sessionRecordAKA"/>
+		<remove-variable doc:name="sessionRecordAKACode" doc:id="dc175f6c-0c9f-45cc-ba7c-768d8e049b84" variableName="sessionRecordAKACode"/>
+		<remove-variable doc:name="sessionRecordAKALastName" doc:id="f8d9868e-e90e-4586-9cc5-adce2f642d17" variableName="sessionRecordAKALastName"/>
+		<remove-variable doc:name="sessionRecordAKAFirstName" doc:id="45807042-1e7c-47cb-bc2a-b3ca1f229180" variableName="sessionRecordAKAFirstName"/>
+		<remove-variable doc:name="sessionRecordAKAMiddleName" doc:id="5664c037-f5e8-4586-ac39-b1ee68e9a4a5" variableName="sessionRecordAKAMiddleName"/>
+		<remove-variable doc:name="sessionRecordAKAGeneration" doc:id="f9f342ca-b373-4506-87a6-0656bc733442" variableName="sessionRecordAKAGeneration"/>
+		<remove-variable doc:name="sessionUpdateAKA" doc:id="9aaaa36a-806a-4980-914c-6a8cd6dd395d" variableName="sessionUpdateAKA"/>
+		<remove-variable doc:name="sessionRecordDLN" doc:id="1735cda2-c8a8-452c-b4fb-e3494d465f8e" variableName="sessionRecordDLN"/>
+		<remove-variable doc:name="sessionRecordDLNState" doc:id="b1bce867-70d5-4673-bcaa-126e4be7557e" variableName="sessionRecordDLNState"/>
+		<remove-variable doc:name="sessionRecordSSN" doc:id="a0122ffc-42c0-47f9-82f4-425db31f51a3" variableName="sessionRecordSSN"/>
+		<remove-variable doc:name="sessionUpdateDLN" doc:id="b64daff1-8dec-4ed8-9e3e-47d9f277639c" variableName="sessionUpdateDLN"/>
+		<remove-variable doc:name="sessionUpdateDLNState" doc:id="401ea87e-b924-40f1-bcc5-fc33fa740383" variableName="sessionUpdateDLNState"/>
+		<remove-variable doc:name="sessionUpdateSSN" doc:id="7b79a3f7-e78f-40ff-9238-bed9607f6748" variableName="sessionUpdateSSN"/>
+	</sub-flow>
+	<sub-flow name="processUpdatedData">
+		<logger level="INFO" doc:name="Logger" />
+		<choice doc:name="Choice">
+			<when expression="#[vars.sessionUpdateCIINum &gt; ' ']">
+				<ee:transform doc:name="CII Data For FUA Insert" doc:id="300e40e2-bbb3-40d2-a42b-4dc942984efb">
+					<ee:variables >
+						<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionUpdatePFN]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyName" ><![CDATA['CII_NUM']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.sessionUpdateCIINum]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[0]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<choice doc:name="Choice">
+			<when expression="#[vars.sessionUpdateFBINum &gt; ' ']">
+				<ee:transform doc:name="FBI Data For FUA Insert" doc:id="2a92e06e-7175-4483-91f7-4795885cf05a">
+					
+					<ee:variables >
+						<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionUpdatePFN]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyName" ><![CDATA['FBI_NUM']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.sessionUpdateFBINum]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[0]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<choice doc:name="Choice">
+			<when
+				expression="#[sizeOf(vars.sessionRecordAKALastName) &gt; 0]">
+				<foreach
+					collection="#[vars.sessionRecordAKALastName]"
+					counterVariableName="akaupdatecounter"
+					doc:name="For Each AKA Update">
+					<ee:transform doc:name="Transform Message" doc:id="dbb89613-a70f-496d-a8ca-e8cd46bfce14" >
+						<ee:variables>
+							<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionUpdatePFN]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyName" ><![CDATA['AKA']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.sessionRecordAKALastName[(vars.akaupdatecounter - 1)] ++ ', ' ++ vars.sessionRecordAKAFirstName[(vars.akaupdatecounter - 1)] ++ ' ' ++ vars.sessionRecordAKAMiddleName[(vars.akaupdatecounter - 1)] ++ ' ' ++ vars.sessionRecordAKAGeneration[(vars.akaupdatecounter - 1)]
+]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[0]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+				</foreach>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<choice doc:name="Choice">
+			<when
+				expression="#[sizeOf(vars.sessionUpdateDLN) &gt; 0]">
+				<foreach collection="#[vars.sessionUpdateDLN]"
+					counterVariableName="dlnupdatecounter"
+					doc:name="For Each DLN Update">
+					<ee:transform doc:name="Transform Message" doc:id="c80723f9-71b9-4535-b608-c0a08429cf30" >
+						<ee:variables>
+							<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionUpdatePFN]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyName" ><![CDATA['DRIVER_LIC_NUM']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.sessionUpdateDLN[(vars.dlnupdatecounter - 1)]]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[0]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+				</foreach>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+		<choice doc:name="Choice">
+			<when
+				expression="#[sizeOf(vars.sessionUpdateSSN) &gt; 0]">
+				<foreach collection="#[vars.sessionUpdateSSN]"
+					counterVariableName="ssnupdatecounter"
+					doc:name="For Each SSN Update">
+					<ee:transform doc:name="Transform Message" doc:id="01b5cf6e-c7d0-403e-99e6-b44056e5e20b" >
+						<ee:variables>
+							<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionUpdatePFN]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyName" ><![CDATA['SOC_SEC_NUM']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.sessionUpdateSSN[(vars.ssnupdatecounter - 1)]]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+							<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[0]]></ee:set-variable> 
+							<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+					<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+				</foreach>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+			</otherwise>
+		</choice>
+	</sub-flow>
+	<sub-flow name="updateCIINum">
+		<logger level="INFO" doc:name="Logger" />
+		<db:select config-ref="DB2_Config_OTS" doc:name="Check for CII Num in CORPUS" target="checkCIISelectQuery">
+			<db:sql><![CDATA[SELECT COUNT(*) FROM S1AOWN.S1VDEF0  WHERE CII_NUM = :recordCIINum;]]></db:sql>
+			<db:input-parameters ><![CDATA[#[{
+	"recordCIINum": vars.recordCIINum
+}]]]></db:input-parameters>
+		
+</db:select>
+		<logger level="INFO" doc:name="Logger" />
+		<choice doc:name="Choice">
+			<when
+				expression='#[vars.checkCIISelectQuery[0]."1" &lt; 1]'>
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+				<ee:transform doc:name="Set CII Num" doc:id="52ae87d6-2ee6-42cf-96ed-2a0c0d4ed6ad" >
+					<ee:variables>
+						<ee:set-variable variableName="updateCIINum" ><![CDATA[vars.recordCIINum]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionUpdateCIINum" ><![CDATA[vars.recordCIINum]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+				<ee:transform doc:name="Set Values for FUA Data Expression - 704" doc:id="a6228504-8609-46af-809a-b24c00bca6ae">
+					<ee:variables>
+						<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionPFN]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyName" ><![CDATA['CII_NUM']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.recordCIINum]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[704]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+			</otherwise>
+		</choice>
+	</sub-flow>
+	<sub-flow name="updateFBINum">
+		<logger level="INFO" doc:name="Logger" />
+		<db:select config-ref="DB2_Config_OTS" doc:name="Check for FBI Num in CORPUS" target="checkFBISelectQuery">
+			<db:sql><![CDATA[SELECT COUNT(*) FROM S1AOWN.S1VDEF0  WHERE FBI_NUM = :recordFBINum;]]></db:sql>
+			<db:input-parameters ><![CDATA[#[{
+	"recordFBINum": vars.recordFBINum
+}]]]></db:input-parameters>
+		
+</db:select>
+		<logger level="INFO" doc:name="Logger" />
+		<choice doc:name="Choice">
+			<when
+				expression='#[vars.checkFBISelectQuery[0]."1" &lt; 1]'>
+				<!--Migration WARN: The MEL expression could not be migrated to a DataWeave 
+					expression. -->
+				<!-- For more information refer to: -->
+				<!-- * https://docs.mulesoft.com/mule-runtime/4.3/migration-mel -->
+				<!-- * https://github.com/mulesoft/mule-migration-assistant/blob/master/docs/user-docs/migration-tool-post-mig.adoc#mel_expressions -->
+				<!-- * https://blogs.mulesoft.com/dev/mule-dev/why-dataweave-main-expression-language-mule-4 -->
+				<ee:transform doc:name="SET FBI Num" doc:id="266adec6-a036-42cd-9a48-2adbf3c1c27c" >
+					<ee:variables>
+						<ee:set-variable variableName="updateFBINum" ><![CDATA[vars.recordFBINum]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionUpdateFBINum" ><![CDATA[vars.recordFBINum]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Logger" />
+				<ee:transform doc:name="Set Values for FUA Data Expression - 705" doc:id="3fe8a3fc-f02b-4e19-9cba-ab3055c20033">
+					<ee:variables>
+						<ee:set-variable variableName="sessionKeyPFN" ><![CDATA[vars.sessionPFN]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyName" ><![CDATA['FBI_NUM']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionKeyValue" ><![CDATA[vars.recordFBINum]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionCRIMSValue" ><![CDATA['']]></ee:set-variable> 
+						<ee:set-variable variableName="sessionErrorNumber" ><![CDATA[705]]></ee:set-variable> 
+						<ee:set-variable variableName="sessionUpdateID" ><![CDATA['FUAAUPDATE']]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref name="insertFUAData" doc:name="Insert into FUA" />
+			</otherwise>
+		</choice>
+	</sub-flow>
+	
+	
+</mule>

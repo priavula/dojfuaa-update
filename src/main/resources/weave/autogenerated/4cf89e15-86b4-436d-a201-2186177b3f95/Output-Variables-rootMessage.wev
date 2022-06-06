@@ -1,0 +1,21 @@
+%dw 2.0
+
+type auto_4cf89e15_86b4_436d_a201_2186177b3f95_Output_Variables_rootMessage = {|
+  payload: Binary, 
+  attributes: org_mule_extension_file_api_LocalFileAttributes
+|} {"typeId": "org.mule.runtime.api.message.Message"}
+type org_mule_extension_file_api_LocalFileAttributes = {|
+  lastModifiedTime: DateTime {"typeId": "java.time.LocalDateTime"}, 
+  lastAccessTime: DateTime {"typeId": "java.time.LocalDateTime"}, 
+  creationTime: DateTime {"typeId": "java.time.LocalDateTime"}, 
+  size: Number, 
+  regularFile?: Boolean {"typeId": "boolean"}, 
+  directory?: Boolean {"typeId": "boolean"}, 
+  symbolicLink?: Boolean {"typeId": "boolean"}, 
+  path: String, 
+  fileName: String
+|} {"typeAlias": "LocalFileAttributes",
+"typeId": "org.mule.extension.file.api.LocalFileAttributes"}
+
+
+

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+	
+	<sub-flow name="personUpdate" doc:id="7578c17d-b484-413d-aa74-605fd2a2c5d1" >
+		<logger level="INFO" doc:name="Logger" doc:id="21de455c-e23d-4c7a-b26a-23899f3424a9" message="Started personUpdate"/>
+		<set-payload value='#[output application/json --- read(vars.sessionRecordUpdateData, "application/json")]' doc:name="Set Payload" doc:id="3fa86723-74f4-4776-92ae-897562d37d22" mimeType="application/json"/>
+		<http:request method="POST" doc:name="https_crims" doc:id="86d0a98f-3abd-4374-b27e-e997babd85f9" config-ref="https_crims_pfn" path="#['/'++ vars.token ++ '/pfn/update']" followRedirects="true" sendBodyMode="ALWAYS" requestStreamingMode="NEVER">
+			<http:headers ><![CDATA[#[output application/java
+---
+{
+	"host" : p('crims.host'),
+	"content-type" : "application/x-www-form-urlencoded"
+}]]]></http:headers>
+		</http:request>
+		<set-variable value="#[payload.status]" doc:name="updateStatus" doc:id="1c572d17-2107-4b98-98c8-be74d7fa8170" variableName="updateStatus"/>
+		<logger level="INFO" doc:name="Logger" doc:id="e233ec12-827b-4950-8fc3-f7500bc4ba30" message="Completed personUpdate"/>
+	</sub-flow>
+</mule>

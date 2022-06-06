@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+			<sub-flow name="getToken" doc:id="6a0e72ef-1b90-4a1d-ba44-fb9eb30c7754" >
+			<logger level="INFO" doc:name="Logger" doc:id="74d86675-5b4c-41b3-a950-24e0689bc75d" message="Started getToken"/>
+		<ee:transform doc:name="Transform Message" doc:id="aa924f34-2487-4cb0-987b-20271b2f79a7" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="tokenPayload" ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	"userId":vars.userId,
+    "password":vars.userPwd
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<logger level="INFO" doc:name="Logger" doc:id="79c94d23-ba98-42a4-ab3b-0483f8e94196" message="#[vars.tokenPayload]"/>
+		<http:request method="POST" doc:name="https_crims" doc:id="f2392d2e-b2b4-4dce-913c-f038c3ceb8ce" config-ref="https_crims_token" path="token">
+			<http:body ><![CDATA[#[vars.tokenPayload]]]></http:body>
+			<http:headers ><![CDATA[#[output application/java
+---
+{
+	"host" : p('crims.host'),
+	"content-type" : "application/x-www-form-urlencoded"
+}]]]></http:headers>
+		</http:request>
+		<set-variable value="#[payload.token]" doc:name="token" doc:id="3cf01798-8ea7-4488-9df1-14f42eebe9c1" variableName="token"/>
+		<logger level="INFO" doc:name="Logger" doc:id="da728618-7af8-4fcd-a7e4-2a89ecd6993e" message="Completed getToken"/>
+	</sub-flow>
+</mule>
