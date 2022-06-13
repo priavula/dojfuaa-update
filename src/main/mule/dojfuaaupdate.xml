@@ -20,15 +20,17 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
 http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd">
 		<flow name="dojfuaaupdateFlow"
-		doc:id="15ea5f0b-aed8-46e4-859d-a771ea89c303">
+		doc:id="15ea5f0b-aed8-46e4-859d-a771ea89c303" maxConcurrency="1">
 		<file:listener doc:name="On New or Updated File"
 			doc:id="7fbb626b-84c2-4f63-8ff3-753fc7785a4b"
-			config-ref="IncomingFile" directory="${tempDOJ.data}" autoDelete="true" moveToDirectory="${tempDOJ.backupdata}" renameTo="#[(vars.fileName default &quot;&quot;) ++ (now() as String{format:'yyyyMMddHHmmssSSSSs'})]">
+			config-ref="IncomingFile" directory="${tempDOJ.data}" moveToDirectory="${tempDOJ.backupdata}" renameTo="#[(attributes.fileName default vars.fileName) ++ (now() as String{format:'yyyyMMddHHmmssSSSSs'})]">
+			<reconnect frequency="5000" count="3" />
 			<scheduling-strategy>
 				<fixed-frequency frequency="${doj.file.frequency}" />
 			</scheduling-strategy>
 		</file:listener>
 		<set-variable value="#[attributes.fileName]" doc:name="Set fileName" doc:id="d3efe899-5c6f-4a6b-8f82-651f25be6429" variableName="fileName"/>
+		<logger level="INFO" doc:name="Logger" doc:id="d0b0956b-2b79-4064-869a-fccf92f06f62" message="Received file #[vars.fileName]"/>
 		<ee:transform doc:name="Transform Message" doc:id="272aae01-7e30-422d-b02b-785492bdcf30" >
 			<ee:message >
 				<ee:set-payload ><![CDATA[%dw 2.0
@@ -66,6 +68,7 @@ if(payload > ' ') substring (payload,0,10) else ''
 			doc:id="dd1000ce-ff12-40cc-aeed-b1338d4d6eb0">
 			<when
 				expression="#[(vars.recordValue &gt; '          ') and (vars.checkFUAAUpdateFlagQuery[0].VALUE == 'true')]">
+				<logger level="INFO" doc:name="Logger" doc:id="2e498310-db20-424f-8710-9ae315c89066" message="Processing File #[vars.fileName]"/>
 				<flow-ref doc:name="dojFuaaProcessFileFlow"
 					doc:id="0f1a8ed6-007b-4232-8219-be09dc4d3c09"
 					name="processFile_Sub_Flow" />
@@ -117,9 +120,10 @@ if(payload > ' ') substring (payload,0,10) else ''
 		<sftp:list doc:name="List" doc:id="6982865d-dcb3-4c01-aa20-f1569052149e" config-ref="SFTP_Config" directoryPath="${tempDOJ.sftp.path}"/>
 		<foreach doc:name="For Each" doc:id="97b3c006-3dee-416f-9477-cc6b6f85045a">
 			<sftp:read doc:name="Read" doc:id="ad1a2d09-bf89-43ba-a1cf-42fa7d915420" config-ref="SFTP_Config" path="#[attributes.path]"/>
-			<file:write doc:name="Write" doc:id="152b0185-edb2-4fdb-9f5e-f1e1f303fa24" path="#[p('tempDOJ.data') ++ attributes.fileName]" config-ref="IncomingFile" createParentDirectories="false"/>
+			<logger level="INFO" doc:name="Logger" doc:id="201c1c8b-5dad-4ff1-b5bd-a466a95c5558" message="#['\n&gt;&gt;&gt; \n&gt;&gt;&gt; DOJ SFTP writing file: ' ++ attributes.fileName ++ '\n&gt;&gt;&gt; ']" />
+			<file:write doc:name="Write" doc:id="152b0185-edb2-4fdb-9f5e-f1e1f303fa24" path="#[p('tempDOJ.data') ++'/'++ attributes.fileName]" config-ref="IncomingFile" createParentDirectories="false"/>
 			<sftp:delete doc:name="Delete" doc:id="36ec46a3-98d4-440c-b8df-4d56979ba219" config-ref="SFTP_Config" path="#[attributes.path]"/>
-			<logger level="INFO" doc:name="Logger" doc:id="b14d5035-f43b-441a-a7ae-ce15ca3d27b1" message="#['\n&gt;&gt;&gt; \n&gt;&gt;&gt; DOJ SFTP retrieved file: ' ++ attributes.fileName ++ '\n&gt;&gt;&gt; ']" />
+			<logger level="INFO" doc:name="Logger" doc:id="b14d5035-f43b-441a-a7ae-ce15ca3d27b1" message="#['\n&gt;&gt;&gt; \n&gt;&gt;&gt; DOJ SFTP file successfully wrote to DOJ Data and deleted from SFTP: ' ++ attributes.fileName ++ '\n&gt;&gt;&gt; ']" />
 		</foreach>
 	</flow>
 	<sub-flow name="processFile_Sub_Flow"
@@ -568,12 +572,13 @@ WHERE PFN_X = :sessionPFN]]></db:sql>
 	<sub-flow name="insertFUAData"
 		doc:id="701453b7-8df8-4b17-9c50-1fdfcdbe41e5">
 		<logger level="INFO" doc:name="Logger"
-			doc:id="9eaa7754-7dbb-4392-a973-784593959787" />
+			doc:id="9eaa7754-7dbb-4392-a973-784593959787" message="inserting Data into FUA"/>
 		<choice doc:name="Choice"
 			doc:id="3b89ca87-721e-401c-94a3-c45c838d1d43">
 			<when expression="#[vars.sessionErrorNumber == 0]">
 				<db:insert doc:name="Insert into FUA1"
 					doc:id="2e299e4e-2fe9-4b82-9fb7-418e546fab13" target="insertToFUA1" config-ref="DB2_Config_OTS">
+					<reconnect frequency="5000" count="3" />
 					<db:sql><![CDATA[INSERT INTO S1AOWN.S1VFUA0 
 (PFN_X, KEY_NAME, KEY_VALUE, LAST_UPDATE_ID, LAST_UPDATE_STAMP)
 VALUES(:sessionKeyPFN, :sessionKeyName, :sessionKeyValue, :sessionUpdateID, 
@@ -589,6 +594,7 @@ currentTimestamp: now() as String {format : "yyyy-MM-dd HH:mm:ss.ms"}
 			<otherwise>
 				<db:insert doc:name="Insert into FUA2"
 					doc:id="bd31ac80-56cb-40fb-9bcc-202e49b0be1e" target="insertToFUA2" config-ref="DB2_Config_OTS">
+					<reconnect frequency="5000" count="3" />
 					<db:sql><![CDATA[INSERT INTO S1AOWN.S1VFUA0 
 (PFN_X, KEY_NAME, KEY_VALUE, CRIMS_VALUE, ERROR_NUMBER, LAST_UPDATE_ID, LAST_UPDATE_STAMP)
 VALUES(:PFN_X, :KEY_NAME, :KEY_VALUE, :CRIMS_VALUE, :ERROR_NUMBER, :LAST_UPDATE_ID, 
@@ -1964,7 +1970,7 @@ return vars.sessionRecordSSN;]]></scripting:code>
 			</otherwise>
 		</choice>
 	</sub-flow>
-	<sub-flow name="process_DLN_Sub_Flow">
+	<flow name="process_DLN_Sub_Flow">
 		<logger message="Going for DLN Process" level="INFO"
 			doc:name="Logger" />
 		<ee:transform doc:name="Transform Message"
@@ -2107,12 +2113,12 @@ else
 				
 </when>
 				<otherwise>
-					<logger level="INFO" doc:name="Logger" />
+					<logger level="INFO" doc:name="Logger" message="DLN counter"/>
 				</otherwise>
 			</choice>
 		</foreach>
-	</sub-flow>
-	<sub-flow name="process_SSN_Sub_Flow">
+	</flow>
+	<flow name="process_SSN_Sub_Flow">
 		<logger message="Going for SSN Process" level="INFO"
 			doc:name="Logger" />
 		<ee:transform doc:name="Transform Message"
@@ -2257,7 +2263,7 @@ else
 				</otherwise>
 			</choice>
 		</foreach>
-	</sub-flow>
+	</flow>
 	<sub-flow name="process_AKA_Sub_Flow"
 		doc:id="80787b27-be17-4450-9e13-853aca78c2f2">
 		<logger
